@@ -39,6 +39,10 @@ export default function WorkerOrders() {
 
       {loading ? (
         <div className="space-y-3">{[...Array(5)].map((_,i) => <div key={i} className="shimmer h-28 rounded-xl"/>)}</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-16 text-swiggy-gray-dark">
+          <p className="font-medium">No orders found</p>
+        </div>
       ) : filtered.map(o => (
         <div key={o.id} className="bg-white rounded-xl shadow-card p-4 mb-3">
           <div className="flex items-center justify-between mb-2">

@@ -14,15 +14,9 @@ router.get('/orders/available', authenticate, requireRole('worker'), async (req,
 
     const snapshot = await db.collection('orders')
       .where('status', '==', 'ready')
-      .orderBy('created_at', 'asc')
       .limit(20)
       .get()
-      .catch(err => {
-        if (err.message.includes('FAILED_PRECONDITION')) {
-          console.error('Firestore Index Missing: Create it here ->', err.message.split('here: ')[1]);
-        }
-        throw err;
-      });
+      .catch(() => ({ docs: [] }))
 
     const orders = await Promise.all(snapshot.docs.map(async doc => {
         const data = doc.data()
@@ -250,30 +244,35 @@ router.get('/earnings', authenticate, requireRole('worker'), async (req, res) =>
 
     const snapshot = await db.collection('worker_earnings')
       .where('worker_id', '==', req.user.id)
-      .where('earned_at', '>=', startDate)
-      .orderBy('earned_at', 'desc')
       .get()
       .catch(() => ({ docs: [] }))
 
-    const earnings = await Promise.all(snapshot.docs.map(async d => {
-        const data = d.data()
-        const orderDoc = await db.collection('orders').doc(data.order_id).get()
-        const o = orderDoc.data()
-        return {
-            ...data,
-            order_number: o?.order_number,
-            delivery_address: o?.delivery_address,
-            actual_distance_km: o?.actual_distance_km,
-            date: data.earned_at?.toDate(),
-            earned_at: data.earned_at?.toDate()
-        }
+    // Filter by period client-side
+    const filtered = snapshot.docs.filter(d => {
+      const t = d.data().earned_at?.toDate ? d.data().earned_at.toDate() : new Date(d.data().earned_at)
+      return t >= startDate
+    })
+
+    const earnings = await Promise.all(filtered.map(async d => {
+      const data = d.data()
+      const orderDoc = await db.collection('orders').doc(data.order_id).get().catch(() => ({ data: () => ({}) }))
+      const o = orderDoc.data()
+      return {
+        ...data,
+        order_number: o?.order_number,
+        delivery_address: o?.delivery_address,
+        date: data.earned_at?.toDate ? data.earned_at.toDate() : null,
+        earned_at: data.earned_at?.toDate ? data.earned_at.toDate() : null
+      }
     }))
 
+    earnings.sort((a, b) => (b.earned_at || 0) - (a.earned_at || 0))
+
     const summary = earnings.reduce((acc, curr) => {
-        acc.total_orders++
-        acc.total_earnings += (curr.total_earning || 0)
-        acc.total_distance += (curr.distance_km || 0)
-        return acc
+      acc.total_orders++
+      acc.total_earnings += (curr.total_earning || 0)
+      acc.total_distance += (curr.distance_km || 0)
+      return acc
     }, { total_orders: 0, total_earnings: 0, total_distance: 0 })
     summary.avg_per_order = summary.total_orders ? summary.total_earnings / summary.total_orders : 0
 
@@ -288,22 +287,25 @@ router.get('/my-stats', authenticate, requireRole('worker'), async (req, res) =>
   try {
     const today = new Date()
     today.setHours(0,0,0,0)
-    
-    const [todayOrders, todayEarnings, totalDeliveries, lifetimeEarnings] = await Promise.all([
-      db.collection('orders').where('worker_id', '==', req.user.id).where('created_at', '>=', today).get().catch(() => ({ size: 0, docs: [] })),
-      db.collection('worker_earnings').where('worker_id', '==', req.user.id).where('earned_at', '>=', today).get().catch(() => ({ size: 0, docs: [] })),
-      db.collection('orders').where('worker_id', '==', req.user.id).where('status', '==', 'delivered').get().catch(() => ({ size: 0 })),
+
+    const [allOrders, allEarnings] = await Promise.all([
+      db.collection('orders').where('worker_id', '==', req.user.id).get().catch(() => ({ docs: [] })),
       db.collection('worker_earnings').where('worker_id', '==', req.user.id).get().catch(() => ({ docs: [] }))
     ])
 
+    const todayEarningDocs = allEarnings.docs.filter(d => {
+      const t = d.data().earned_at?.toDate ? d.data().earned_at.toDate() : new Date(d.data().earned_at)
+      return t >= today
+    })
+
     const stats = {
-      today_orders: todayOrders.size,
-      today_earnings: todayEarnings.docs.reduce((sum, d) => sum + (d.data().total_earning || 0), 0),
-      total_deliveries: totalDeliveries.size,
-      lifetime_earnings: lifetimeEarnings.docs.reduce((sum, d) => sum + (d.data().total_earning || 0), 0),
-      today_distance: todayEarnings.docs.reduce((sum, d) => sum + (d.data().distance_km || 0), 0)
+      today_orders: todayEarningDocs.length,
+      today_earnings: todayEarningDocs.reduce((sum, d) => sum + (d.data().total_earning || 0), 0),
+      total_deliveries: allOrders.docs.filter(d => d.data().status === 'delivered').length,
+      lifetime_earnings: allEarnings.docs.reduce((sum, d) => sum + (d.data().total_earning || 0), 0),
+      today_distance: todayEarningDocs.reduce((sum, d) => sum + (d.data().distance_km || 0), 0)
     }
-    
+
     res.json(stats)
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -316,46 +318,50 @@ router.get('/dashboard', authenticate, requireRole('worker'), async (req, res) =
     const today = new Date()
     today.setHours(0,0,0,0)
 
-    const [statsSnapshot, activeOrderSnapshot, availableSnapshot, profileDoc] = await Promise.all([
-      db.collection('worker_earnings').where('worker_id', '==', req.user.id).where('earned_at', '>=', today).get().catch(() => ({ docs: [], size: 0 })),
-      db.collection('orders').where('worker_id', '==', req.user.id).where('status', 'in', ['assigned','picked_up','delivering']).limit(1).get().catch(() => ({ empty: true, docs: [] })),
-      db.collection('orders').where('status', '==', 'ready').orderBy('created_at', 'asc').limit(10).get().catch(err => {
-        if (err.message.includes('FAILED_PRECONDITION')) console.error('Index needed:', err.message.split('here: ')[1])
-        return { docs: [] }
-      }),
+    const [statsSnapshot, allWorkerOrders, availableSnapshot, profileDoc] = await Promise.all([
+      db.collection('worker_earnings').where('worker_id', '==', req.user.id).get().catch(() => ({ docs: [], size: 0 })),
+      db.collection('orders').where('worker_id', '==', req.user.id).get().catch(() => ({ docs: [] })),
+      db.collection('orders').where('status', '==', 'ready').limit(10).get().catch(() => ({ docs: [] })),
       db.collection('worker_profiles').doc(req.user.id).get()
     ])
 
-    const profileData = profileDoc.data() || {}
+    const profileData = profileDoc.exists ? profileDoc.data() : {}
     const activeMs = profileData.daily_active_ms || 0
-    const activeHours = (activeMs / (1000 * 60 * 60)).toFixed(1)
+
+    // Filter today's earnings client-side to avoid composite index
+    const todayEarnings = statsSnapshot.docs.filter(d => {
+      const earned = d.data().earned_at?.toDate ? d.data().earned_at.toDate() : new Date(d.data().earned_at)
+      return earned >= today
+    })
 
     const stats = {
-      today_orders: statsSnapshot.size,
-      today_earnings: statsSnapshot.docs.reduce((sum, d) => sum + (d.data().total_earning || 0), 0),
-      distance_km: statsSnapshot.docs.reduce((sum, d) => sum + (d.data().distance_km || 0), 0).toFixed(1),
-      active_hours: parseFloat(activeHours)
+      today_orders: todayEarnings.length,
+      today_earnings: todayEarnings.reduce((sum, d) => sum + (d.data().total_earning || 0), 0),
+      distance_km: parseFloat(todayEarnings.reduce((sum, d) => sum + (d.data().distance_km || 0), 0).toFixed(1)),
+      active_hours: parseFloat((activeMs / (1000 * 60 * 60)).toFixed(1))
     }
 
+    // Find active order client-side
+    const activeStatuses = ['assigned', 'picked_up', 'delivering']
+    const activeDoc = allWorkerOrders.docs.find(d => activeStatuses.includes(d.data().status))
     let activeOrder = null
-    if (!activeOrderSnapshot.empty) {
-        const d = activeOrderSnapshot.docs[0]
-        const orderData = d.data()
-        const resDoc = await db.collection('restaurants').doc(orderData.restaurant_id).get()
-        activeOrder = { ...orderData, id: d.id, restaurant_name: resDoc.data()?.name }
+    if (activeDoc) {
+      const orderData = activeDoc.data()
+      const resDoc = await db.collection('restaurants').doc(orderData.restaurant_id).get().catch(() => ({ data: () => ({}) }))
+      activeOrder = { ...orderData, id: activeDoc.id, restaurant_name: resDoc.data()?.name }
     }
 
     const availableOrders = await Promise.all(availableSnapshot.docs.map(async d => {
-        const orderData = d.data()
-        const resDoc = await db.collection('restaurants').doc(orderData.restaurant_id).get()
-        return { ...orderData, id: d.id, restaurant_name: resDoc.data()?.name }
+      const orderData = d.data()
+      const resDoc = await db.collection('restaurants').doc(orderData.restaurant_id).get().catch(() => ({ data: () => ({}) }))
+      return { ...orderData, id: d.id, restaurant_name: resDoc.data()?.name }
     }))
 
     res.json({
       stats,
       activeOrder,
       availableOrders,
-      status: profileDoc.exists ? profileDoc.data().current_status : 'offline'
+      status: profileData.current_status || 'offline'
     })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -367,24 +373,23 @@ router.get('/orders', authenticate, requireRole('worker'), async (req, res) => {
   try {
     const snapshot = await db.collection('orders')
       .where('worker_id', '==', req.user.id)
-      .orderBy('created_at', 'desc')
-      .limit(50)
       .get()
-      .catch(err => {
-        if (err.message.includes('FAILED_PRECONDITION')) console.error('Index needed:', err.message.split('here: ')[1])
-        throw err
-      })
+      .catch(() => ({ docs: [] }))
 
     const orders = await Promise.all(snapshot.docs.map(async doc => {
       const data = doc.data()
-      const resDoc = await db.collection('restaurants').doc(data.restaurant_id).get()
+      const resDoc = await db.collection('restaurants').doc(data.restaurant_id).get().catch(() => ({ data: () => ({}) }))
       return {
         ...data,
         id: doc.id,
         restaurant_name: resDoc.data()?.name,
-        created_at: data.created_at?.toDate()
+        created_at: data.created_at?.toDate ? data.created_at.toDate() : null
       }
     }))
+
+    // Sort client-side — no composite index needed
+    orders.sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
+
     res.json({ orders })
   } catch (err) {
     res.status(500).json({ error: err.message })
