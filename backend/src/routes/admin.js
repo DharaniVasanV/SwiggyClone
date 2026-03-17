@@ -173,7 +173,10 @@ router.get('/orders', async (req, res) => {
     
     if (status) query = query.where('status', '==', status)
     
-    const snapshot = await query.orderBy('created_at', 'desc').limit(100).get()
+    const snapshot = await query.orderBy('created_at', 'desc').limit(100).get().catch(err => {
+      if (err.message.includes('FAILED_PRECONDITION')) console.error('Index needed:', err.message.split('here: ')[1])
+      return { docs: [] }
+    })
     const orders = await Promise.all(snapshot.docs.map(async doc => {
         const data = doc.data()
         const [resDoc, customerQuery, workerQuery] = await Promise.all([
@@ -243,7 +246,7 @@ router.get('/analytics', async (req, res) => {
     const startDate = new Date()
     startDate.setDate(startDate.getDate() - parseInt(days))
 
-    const ordersSnap = await db.collection('orders').where('created_at', '>=', startDate).get()
+    const ordersSnap = await db.collection('orders').where('created_at', '>=', startDate).get().catch(() => ({ docs: [] }))
     const orders = ordersSnap.docs.map(d => ({ ...d.data(), created_at: d.data().created_at?.toDate() }))
 
     // Grouping by daily

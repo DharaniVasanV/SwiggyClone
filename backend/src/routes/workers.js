@@ -253,6 +253,7 @@ router.get('/earnings', authenticate, requireRole('worker'), async (req, res) =>
       .where('earned_at', '>=', startDate)
       .orderBy('earned_at', 'desc')
       .get()
+      .catch(() => ({ docs: [] }))
 
     const earnings = await Promise.all(snapshot.docs.map(async d => {
         const data = d.data()
@@ -289,10 +290,10 @@ router.get('/my-stats', authenticate, requireRole('worker'), async (req, res) =>
     today.setHours(0,0,0,0)
     
     const [todayOrders, todayEarnings, totalDeliveries, lifetimeEarnings] = await Promise.all([
-      db.collection('orders').where('worker_id', '==', req.user.id).where('created_at', '>=', today).get(),
-      db.collection('worker_earnings').where('worker_id', '==', req.user.id).where('earned_at', '>=', today).get(),
-      db.collection('orders').where('worker_id', '==', req.user.id).where('status', '==', 'delivered').get(),
-      db.collection('worker_earnings').where('worker_id', '==', req.user.id).get()
+      db.collection('orders').where('worker_id', '==', req.user.id).where('created_at', '>=', today).get().catch(() => ({ size: 0, docs: [] })),
+      db.collection('worker_earnings').where('worker_id', '==', req.user.id).where('earned_at', '>=', today).get().catch(() => ({ size: 0, docs: [] })),
+      db.collection('orders').where('worker_id', '==', req.user.id).where('status', '==', 'delivered').get().catch(() => ({ size: 0 })),
+      db.collection('worker_earnings').where('worker_id', '==', req.user.id).get().catch(() => ({ docs: [] }))
     ])
 
     const stats = {
@@ -316,8 +317,8 @@ router.get('/dashboard', authenticate, requireRole('worker'), async (req, res) =
     today.setHours(0,0,0,0)
 
     const [statsSnapshot, activeOrderSnapshot, availableSnapshot, profileDoc] = await Promise.all([
-      db.collection('worker_earnings').where('worker_id', '==', req.user.id).where('earned_at', '>=', today).get(),
-      db.collection('orders').where('worker_id', '==', req.user.id).where('status', 'in', ['assigned','picked_up','delivering']).limit(1).get(),
+      db.collection('worker_earnings').where('worker_id', '==', req.user.id).where('earned_at', '>=', today).get().catch(() => ({ docs: [], size: 0 })),
+      db.collection('orders').where('worker_id', '==', req.user.id).where('status', 'in', ['assigned','picked_up','delivering']).limit(1).get().catch(() => ({ empty: true, docs: [] })),
       db.collection('orders').where('status', '==', 'ready').orderBy('created_at', 'asc').limit(10).get().catch(err => {
         if (err.message.includes('FAILED_PRECONDITION')) console.error('Index needed:', err.message.split('here: ')[1])
         return { docs: [] }
