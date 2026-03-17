@@ -1,9 +1,11 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import { FiGrid, FiPackage, FiDollarSign, FiTrendingUp, FiUser } from 'react-icons/fi'
 import { useAuthStore } from '../../store/authStore'
 import { useWorkerStore } from '../../store/workerStore'
 import { connectSocket, subscribeToNewOrders, disconnectSocket } from '../../services/socket'
+import { workerAPI } from '../../services/api'
+import WorkerPendingApproval from '../../pages/auth/WorkerPendingApproval'
 import toast from 'react-hot-toast'
 
 const NAV = [
@@ -16,10 +18,24 @@ const NAV = [
 
 export default function WorkerLayout() {
   const { pathname } = useLocation()
-  const { user } = useAuthStore()
+  const { user, setAuth, token } = useAuthStore()
   const { addAvailableOrder } = useWorkerStore()
+  const [verificationStatus, setVerificationStatus] = useState(null)
+  const [checkingVerification, setCheckingVerification] = useState(true)
 
   useEffect(() => {
+    // Check verification status from backend
+    workerAPI.getDashboard()
+      .then(res => {
+        const status = res.data.verificationStatus || 'pending'
+        setVerificationStatus(status)
+      })
+      .catch(() => setVerificationStatus('pending'))
+      .finally(() => setCheckingVerification(false))
+  }, [])
+
+  useEffect(() => {
+    if (verificationStatus !== 'verified') return
     // Connect socket ONCE when worker enters the layout, not on every page mount
     connectSocket()
     const unsub = subscribeToNewOrders((order) => {
@@ -30,7 +46,13 @@ export default function WorkerLayout() {
       unsub?.()
       disconnectSocket()
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [verificationStatus]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (checkingVerification) return <div className="min-h-screen flex items-center justify-center text-swiggy-gray-dark">Loading...</div>
+
+  if (verificationStatus !== 'verified') {
+    return <WorkerPendingApproval verificationStatus={verificationStatus} />
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col w-full">

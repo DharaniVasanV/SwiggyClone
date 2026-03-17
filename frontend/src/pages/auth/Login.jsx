@@ -71,9 +71,9 @@ export default function Login() {
           <div className="mt-6 p-4 bg-swiggy-gray rounded-lg">
             <p className="text-xs font-medium text-swiggy-dark mb-2">Demo accounts</p>
             <div className="space-y-1 text-xs text-swiggy-gray-dark">
-              <p>Admin: admin@swiggy.com / admin123</p>
-              <p>Worker: worker@swiggy.com / worker123</p>
-              <p>Customer: user@swiggy.com / user123</p>
+              <p>Admin: admin@test.com / admin123</p>
+              <p>Worker: ravi@test.com / password123</p>
+              <p>Customer: customer@test.com / password123</p>
             </div>
           </div>
         </div>

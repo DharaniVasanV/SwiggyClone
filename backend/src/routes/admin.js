@@ -81,23 +81,28 @@ router.get('/workers', async (req, res) => {
     const snapshot = await query.get()
     const workers = await Promise.all(snapshot.docs.map(async doc => {
         const wp = doc.data()
-        const userQuery = await db.collection('users').where('id', '==', wp.user_id).limit(1).get()
+        const [userQuery, earningsSnap] = await Promise.all([
+          db.collection('users').where('id', '==', wp.user_id).limit(1).get(),
+          db.collection('worker_earnings').where('worker_id', '==', wp.user_id).get().catch(() => ({ docs: [] }))
+        ])
         const user = userQuery.empty ? {} : userQuery.docs[0].data()
+        const lifetime_earnings = earningsSnap.docs.reduce((sum, d) => sum + (d.data().total_earning || 0), 0)
         
         return {
             id: wp.user_id,
             name: user.name,
             email: user.email,
             phone: user.phone,
-            created_at: user.created_at?.toDate(),
+            created_at: user.created_at?.toDate ? user.created_at.toDate() : null,
             is_verified: user.is_verified,
             ...wp,
             total_deliveries: wp.total_deliveries || 0,
-            rating: wp.rating || 0
+            rating: wp.rating || 0,
+            lifetime_earnings
         }
     }))
 
-    res.json({ workers: workers.sort((a,b) => b.created_at - a.created_at) })
+    res.json({ workers: workers.sort((a,b) => (b.created_at || 0) - (a.created_at || 0)) })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

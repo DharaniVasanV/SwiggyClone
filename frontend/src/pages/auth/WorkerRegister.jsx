@@ -40,7 +40,7 @@ export default function WorkerRegister() {
     try {
       await authAPI.verifyOtp(form.phone, form.otp)
       toast.success('Phone verified! Awaiting admin approval.')
-      navigate('/worker')
+      navigate('/worker') // WorkerLayout will show pending screen automatically
     } catch { toast.error('Invalid OTP') }
     finally { setLoading(false) }
   }

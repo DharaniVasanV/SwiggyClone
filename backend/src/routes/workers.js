@@ -47,7 +47,7 @@ router.get('/dashboard', authenticate, requireRole('worker'), async (req, res) =
       return { ...orderData, id: d.id, restaurant_name: resDoc.data()?.name }
     }))
 
-    res.json({ stats, activeOrder, availableOrders, status: profileData.current_status || 'offline' })
+    res.json({ stats, activeOrder, availableOrders, status: profileData.current_status || 'offline', verificationStatus: profileData.verification_status || 'pending' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
