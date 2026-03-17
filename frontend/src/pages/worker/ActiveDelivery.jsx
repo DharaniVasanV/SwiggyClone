@@ -140,9 +140,9 @@ export default function ActiveDelivery() {
             </Marker>
           )}
         </MapContainer>
-        {destLocation && (
+        {order?.delivery_address && (
           <a
-            href={`https://www.google.com/maps/dir/?api=1&destination=${destLocation.lat},${destLocation.lng}`}
+            href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(order.delivery_address)}`}
             target="_blank" rel="noreferrer"
             className="absolute bottom-3 right-3 z-[999] bg-white text-swiggy-orange font-bold text-xs px-3 py-1.5 rounded-lg shadow flex items-center gap-1">
             <FiNavigation className="w-3 h-3" /> Navigate
