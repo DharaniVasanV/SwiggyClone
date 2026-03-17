@@ -199,7 +199,7 @@ router.post('/orders/:id/accept', authenticate, requireRole('worker'), async (re
     const orderRef = db.collection('orders').doc(req.params.id)
     const result = await db.runTransaction(async (transaction) => {
       const orderDoc = await transaction.get(orderRef)
-      if (!orderDoc.exists || orderDoc.data().status !== 'ready' || orderDoc.data().worker_id) {
+      if (!orderDoc.exists || !['ready','placed'].includes(orderDoc.data().status) || orderDoc.data().worker_id) {
         throw new Error('Order no longer available')
       }
       const updateData = {
