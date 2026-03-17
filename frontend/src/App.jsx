@@ -46,6 +46,14 @@ const ProtectedRoute = ({ children, role }) => {
   return children
 }
 
+// Redirect workers/admins away from customer routes
+const CustomerRoute = ({ children }) => {
+  const { user } = useAuthStore()
+  if (user?.role === 'worker') return <Navigate to="/worker" replace />
+  if (user?.role === 'admin') return <Navigate to="/admin" replace />
+  return children
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -58,7 +66,7 @@ export default function App() {
         <Route path="/worker/register" element={<WorkerRegister />} />
 
         {/* Customer Routes */}
-        <Route path="/" element={<CustomerLayout />}>
+        <Route path="/" element={<CustomerRoute><CustomerLayout /></CustomerRoute>}>
           <Route index element={<Home />} />
           <Route path="restaurants" element={<RestaurantList />} />
           <Route path="restaurant/:id" element={<RestaurantDetail />} />

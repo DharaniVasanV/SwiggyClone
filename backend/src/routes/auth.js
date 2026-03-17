@@ -138,23 +138,29 @@ router.post('/verify-otp', async (req, res) => {
   try {
     const { phone, code } = req.body
 
+    // Single-field query only — no composite index needed
     const otpQuery = await db.collection('otp_codes')
       .where('phone', '==', phone)
-      .where('code', '==', code)
-      .where('used', '==', false)
-      .orderBy('created_at', 'desc')
-      .limit(1)
       .get()
 
-    if (otpQuery.empty) return res.status(400).json({ error: 'Invalid or expired OTP' })
-    
-    const otpDoc = otpQuery.docs[0]
-    if (otpDoc.data().expires_at.toDate() < new Date()) {
-        return res.status(400).json({ error: 'OTP expired' })
-    }
+    // Client-side filter: matching code, not used, not expired
+    const now = new Date()
+    const validDoc = otpQuery.docs
+      .filter(d => {
+        const data = d.data()
+        const expiresAt = data.expires_at?.toDate ? data.expires_at.toDate() : new Date(data.expires_at)
+        return data.code === code && data.used === false && expiresAt > now
+      })
+      .sort((a, b) => {
+        const tA = a.data().created_at?.toDate ? a.data().created_at.toDate() : new Date(a.data().created_at)
+        const tB = b.data().created_at?.toDate ? b.data().created_at.toDate() : new Date(b.data().created_at)
+        return tB - tA
+      })[0]
 
-    await otpDoc.ref.update({ used: true })
-    
+    if (!validDoc) return res.status(400).json({ error: 'Invalid or expired OTP' })
+
+    await validDoc.ref.update({ used: true })
+
     const userQuery = await db.collection('users').where('phone', '==', phone).get()
     if (!userQuery.empty) {
       await userQuery.docs[0].ref.update({ is_verified: true })
