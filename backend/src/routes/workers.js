@@ -187,6 +187,33 @@ router.get('/orders', authenticate, requireRole('worker'), async (req, res) => {
   }
 })
 
+// GET /api/workers/orders/:id — get single order detail for active delivery
+router.get('/orders/:id', authenticate, requireRole('worker'), async (req, res) => {
+  try {
+    const orderDoc = await db.collection('orders').doc(req.params.id).get()
+    if (!orderDoc.exists) return res.status(404).json({ error: 'Order not found' })
+    const order = orderDoc.data()
+
+    const [resDoc, customerQuery] = await Promise.all([
+      db.collection('restaurants').doc(order.restaurant_id).get().catch(() => ({ data: () => ({}) })),
+      db.collection('users').where('id', '==', order.customer_id).limit(1).get().catch(() => ({ empty: true, docs: [] }))
+    ])
+
+    const customer = customerQuery.empty ? {} : customerQuery.docs[0].data()
+
+    res.json({
+      ...order,
+      id: orderDoc.id,
+      restaurant_name: resDoc.data()?.name,
+      customer_name: customer.name,
+      customer_phone: customer.phone,
+      created_at: order.created_at?.toDate ? order.created_at.toDate() : null
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // POST /api/workers/orders/:id/accept
 router.post('/orders/:id/accept', authenticate, requireRole('worker'), async (req, res) => {
   try {
@@ -296,6 +323,15 @@ router.post('/orders/:id/failure', authenticate, requireRole('worker'), async (r
     })
 
     await db.collection('worker_profiles').doc(req.user.id).update({ current_status: 'available' })
+
+    // Notify customer via socket
+    const io = getIO()
+    io?.to(`order:${req.params.id}`).emit(`order:${req.params.id}:status`, {
+      status: 'failed',
+      reason,
+      message: `Delivery failed: ${reason.replace(/_/g, ' ')}`
+    })
+
     res.json({ message: 'Failure reported' })
   } catch (err) {
     res.status(500).json({ error: err.message })

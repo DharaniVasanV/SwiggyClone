@@ -59,6 +59,7 @@ export const workerAPI = {
   setStatus: (status) => api.patch('/workers/status', { status }),
   getMyStats: () => api.get('/workers/my-stats'),
   getMyOrders: () => api.get('/workers/orders'),
+  getOrder: (orderId) => api.get(`/workers/orders/${orderId}`),
   getMyEarnings: (period) => api.get('/workers/earnings', { params: { period } }),
   reportFailure: (orderId, data) => api.post(`/workers/orders/${orderId}/failure`, data),
   getDashboard: () => api.get('/workers/dashboard'),

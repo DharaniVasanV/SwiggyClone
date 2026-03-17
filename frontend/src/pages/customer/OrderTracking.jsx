@@ -64,7 +64,11 @@ export default function OrderTracking() {
       (loc) => setWorkerLocation(loc),
       (statusUpdate) => {
         setOrder((o) => ({ ...o, ...statusUpdate }))
-        toast.success(`Order status: ${statusUpdate.status.replace('_', ' ')}`)
+        if (statusUpdate.status === 'failed') {
+          toast.error(`Delivery failed: ${statusUpdate.reason?.replace(/_/g, ' ') || 'Unable to deliver'}`, { duration: 6000 })
+        } else {
+          toast.success(`Order status: ${statusUpdate.status.replace('_', ' ')}`)
+        }
       }
     )
     return () => unsub?.()
@@ -81,6 +85,20 @@ export default function OrderTracking() {
   )
 
   const currentStepIdx = STEPS.findIndex((s) => s.key === (order?.status || 'placed'))
+
+  if (order?.status === 'failed') return (
+    <div className="max-w-2xl mx-auto px-4 py-6">
+      <div className="bg-red-500 text-white rounded-xl p-5 mb-6 text-center">
+        <FiAlertCircle className="w-10 h-10 mx-auto mb-2" />
+        <p className="text-xl font-bold">Delivery Failed</p>
+        <p className="text-sm mt-1 opacity-90">{order.failure_reason?.replace(/_/g, ' ') || 'Unable to complete delivery'}</p>
+      </div>
+      <div className="bg-white rounded-xl shadow-card p-5 text-center">
+        <p className="text-swiggy-gray-dark text-sm">We apologize for the inconvenience. Please contact support or reorder.</p>
+        <p className="text-xs text-swiggy-gray-dark mt-2">Order #{order.order_number}</p>
+      </div>
+    </div>
+  )
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
