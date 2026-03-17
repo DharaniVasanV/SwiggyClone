@@ -1,6 +1,10 @@
+import { useEffect } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import { FiGrid, FiPackage, FiDollarSign, FiTrendingUp, FiUser } from 'react-icons/fi'
 import { useAuthStore } from '../../store/authStore'
+import { useWorkerStore } from '../../store/workerStore'
+import { connectSocket, subscribeToNewOrders, disconnectSocket } from '../../services/socket'
+import toast from 'react-hot-toast'
 
 const NAV = [
   { to: '/worker', icon: <FiGrid />, label: 'Home', exact: true },
@@ -13,6 +17,20 @@ const NAV = [
 export default function WorkerLayout() {
   const { pathname } = useLocation()
   const { user } = useAuthStore()
+  const { addAvailableOrder } = useWorkerStore()
+
+  useEffect(() => {
+    // Connect socket ONCE when worker enters the layout, not on every page mount
+    connectSocket()
+    const unsub = subscribeToNewOrders((order) => {
+      toast.success(`New order at ${order.restaurant_name}: ₹${order.worker_earning}`, { icon: '🛵', duration: 6000 })
+      addAvailableOrder(order)
+    })
+    return () => {
+      unsub?.()
+      disconnectSocket()
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col w-full">
@@ -48,3 +66,4 @@ export default function WorkerLayout() {
     </div>
   )
 }
+

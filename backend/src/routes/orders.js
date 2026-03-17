@@ -63,6 +63,12 @@ router.get('/my', authenticate, requireRole('customer'), async (req, res) => {
       .where('customer_id', '==', req.user.id)
       .orderBy('created_at', 'desc')
       .get()
+      .catch(err => {
+        if (err.message.includes('FAILED_PRECONDITION')) {
+          console.error('FIX: Order History Index Needed ->', err.message.split('here: ')[1]);
+        }
+        throw err;
+      });
 
     const orders = await Promise.all(snapshot.docs.map(async doc => {
         const data = doc.data()

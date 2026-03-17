@@ -17,6 +17,12 @@ router.get('/orders/available', authenticate, requireRole('worker'), async (req,
       .orderBy('created_at', 'asc')
       .limit(20)
       .get()
+      .catch(err => {
+        if (err.message.includes('FAILED_PRECONDITION')) {
+          console.error('Firestore Index Missing: Create it here ->', err.message.split('here: ')[1]);
+        }
+        throw err;
+      });
 
     const orders = await Promise.all(snapshot.docs.map(async doc => {
         const data = doc.data()
@@ -312,7 +318,7 @@ router.get('/dashboard', authenticate, requireRole('worker'), async (req, res) =
     const [statsSnapshot, activeOrderSnapshot, availableSnapshot, profileDoc] = await Promise.all([
       db.collection('worker_earnings').where('worker_id', '==', req.user.id).where('earned_at', '>=', today).get(),
       db.collection('orders').where('worker_id', '==', req.user.id).where('status', 'in', ['assigned','picked_up','delivering']).limit(1).get(),
-      db.collection('orders').where('status', '==', 'ready').orderBy('created_at', 'asc')/*.where('worker_id', '==', null)*/.limit(10).get(),
+      db.collection('orders').where('status', '==', 'ready').orderBy('created_at', 'asc').limit(10).get(),
       db.collection('worker_profiles').doc(req.user.id).get()
     ])
 

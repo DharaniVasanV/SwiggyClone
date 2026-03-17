@@ -1,11 +1,12 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { FiPhone, FiMessageSquare, FiCheckCircle, FiClock } from 'react-icons/fi'
+import { FiPhone, FiMessageSquare, FiCheckCircle, FiClock, FiAlertCircle } from 'react-icons/fi'
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
 import L from 'leaflet'
 import { orderAPI } from '../../services/api'
-import { connectSocket, subscribeToOrder, disconnectSocket } from '../../services/socket'
+import { connectSocket, subscribeToOrder } from '../../services/socket'
 import MapRecenter from '../../components/common/MapRecenter'
+import toast from 'react-hot-toast'
 
 // Fix Leaflet icon issue
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
@@ -37,66 +38,96 @@ const STEPS = [
 export default function OrderTracking() {
   const { id } = useParams()
   const [order, setOrder] = useState(null)
-  const [workerLocation, setWorkerLocation] = useState({ lat: 12.9716, lng: 77.5946 }) // Default Bangalore
-  const [eta, setEta] = useState('25-30 min')
+  const [workerLocation, setWorkerLocation] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
     const fetchOrder = async () => {
       try {
         const res = await orderAPI.getTracking(id)
         setOrder(res.data)
-        if (res.data.worker_lat) setWorkerLocation({ lat: res.data.worker_lat, lng: res.data.worker_lng })
-      } catch {
-        setOrder(MOCK_ORDER)
+        if (res.data.worker_lat) {
+          setWorkerLocation({ lat: res.data.worker_lat, lng: res.data.worker_lng })
+        }
+      } catch (err) {
+        setError('Could not load order tracking details')
+        toast.error('Failed to load real-time tracking')
+      } finally {
+        setLoading(false)
       }
     }
     fetchOrder()
 
-    const socket = connectSocket()
+    connectSocket()
     const unsub = subscribeToOrder(id,
       (loc) => setWorkerLocation(loc),
-      (status) => setOrder((o) => ({ ...o, status }))
+      (statusUpdate) => {
+        setOrder((o) => ({ ...o, ...statusUpdate }))
+        toast.success(`Order status: ${statusUpdate.status.replace('_', ' ')}`)
+      }
     )
-    return () => { unsub?.(); disconnectSocket() }
+    return () => unsub?.()
   }, [id])
 
-  const currentStepIdx = STEPS.findIndex((s) => s.key === (order?.status || 'preparing'))
+  if (loading) return <div className="py-20 text-center text-swiggy-gray-dark">Fetching live tracking...</div>
+  
+  if (error || !order) return (
+    <div className="py-20 text-center text-swiggy-gray-dark px-4">
+      <FiAlertCircle className="w-12 h-12 mx-auto mb-3 text-red-400" />
+      <p className="font-bold text-lg text-swiggy-dark">{error || 'Order not found'}</p>
+      <button onClick={() => window.location.reload()} className="mt-4 text-swiggy-orange font-bold">Try again</button>
+    </div>
+  )
+
+  const currentStepIdx = STEPS.findIndex((s) => s.key === (order?.status || 'placed'))
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
       {/* Header */}
-      <div className="bg-swiggy-green text-white rounded-xl p-5 mb-6">
+      <div className={`${order.status === 'delivered' ? 'bg-swiggy-green' : 'bg-swiggy-dark'} text-white rounded-xl p-5 mb-6 shadow-lg`}>
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-green-100 text-sm">Estimated delivery</p>
-            <p className="text-2xl font-bold mt-1">{eta}</p>
+            <p className="text-gray-300 text-sm">
+              {order.status === 'delivered' ? 'Delivered at' : 'Estimated delivery'}
+            </p>
+            <p className="text-2xl font-bold mt-1">
+              {order.status === 'delivered' ? 'Completed' : '25-30 min'}
+            </p>
           </div>
           <div className="text-right">
-            <p className="text-green-100 text-sm">Order #{order?.order_number || 'ORD-4521'}</p>
-            <p className="text-sm font-medium mt-1">{order?.restaurant_name || "Domino's Pizza"}</p>
+            <p className="text-gray-300 text-sm">Order #{order.order_number}</p>
+            <p className="text-sm font-medium mt-1 truncate max-w-[150px]">{order.restaurant_name}</p>
           </div>
         </div>
       </div>
 
       {/* Map */}
-      <div className="bg-gray-100 rounded-xl h-64 mb-6 relative overflow-hidden border border-gray-200">
-        <MapContainer center={[workerLocation.lat, workerLocation.lng]} zoom={15} style={{ height: '100%', width: '100%' }}>
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          <MapRecenter lat={workerLocation.lat} lng={workerLocation.lng} />
-          <Marker position={[workerLocation.lat, workerLocation.lng]} icon={workerIcon}>
-            <Popup>
-              <p className="text-xs font-bold">Your delivery partner is here</p>
-            </Popup>
-          </Marker>
-        </MapContainer>
+      <div className="bg-gray-100 rounded-xl h-72 mb-6 relative overflow-hidden border border-gray-200 shadow-inner">
+        {workerLocation ? (
+          <MapContainer center={[workerLocation.lat, workerLocation.lng]} zoom={15} style={{ height: '100%', width: '100%' }}>
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            <MapRecenter lat={workerLocation.lat} lng={workerLocation.lng} />
+            <Marker position={[workerLocation.lat, workerLocation.lng]} icon={workerIcon}>
+              <Popup>
+                <p className="text-xs font-bold">Your delivery partner</p>
+              </Popup>
+            </Marker>
+          </MapContainer>
+        ) : (
+          <div className="flex items-center justify-center h-full text-swiggy-gray-dark flex-col">
+            <FiClock className="w-8 h-8 mb-2 animate-spin-slow" />
+            <p className="text-sm px-10 text-center">Waiting for delivery partner to start GPS...</p>
+          </div>
+        )}
       </div>
 
       {/* Order Status Steps */}
       <div className="bg-white rounded-xl shadow-card p-5 mb-6">
-        <h2 className="font-bold text-swiggy-dark mb-4">Order status</h2>
+        <h2 className="font-bold text-swiggy-dark mb-4 text-lg">Track your order</h2>
         <div className="space-y-4">
           {STEPS.map((step, idx) => {
             const done = idx <= currentStepIdx
@@ -104,14 +135,14 @@ export default function OrderTracking() {
             return (
               <div key={step.key} className="flex items-start gap-3">
                 <div className="flex flex-col items-center">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${done ? 'bg-swiggy-green' : 'bg-gray-200'} ${active ? 'ring-2 ring-swiggy-green ring-offset-2' : ''}`}>
-                    {done && <FiCheckCircle className="w-3 h-3 text-white" />}
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${done ? 'bg-swiggy-green' : 'bg-gray-200'}`}>
+                    {done ? <FiCheckCircle className="w-4 h-4 text-white" /> : <div className="w-2 h-2 bg-white rounded-full" />}
                   </div>
-                  {idx < STEPS.length - 1 && <div className={`w-0.5 h-6 mt-1 ${done && idx < currentStepIdx ? 'bg-swiggy-green' : 'bg-gray-200'}`} />}
+                  {idx < STEPS.length - 1 && <div className={`w-[2px] h-8 mt-1 ${done && idx < currentStepIdx ? 'bg-swiggy-green' : 'bg-gray-200'}`} />}
                 </div>
-                <div className="pb-2">
-                  <p className={`text-sm font-medium ${done ? 'text-swiggy-dark' : 'text-gray-400'}`}>{step.label}</p>
-                  {active && <p className="text-xs text-swiggy-gray-dark mt-0.5">{step.desc}</p>}
+                <div className="pb-4">
+                  <p className={`text-base font-semibold ${active ? 'text-swiggy-orange' : done ? 'text-swiggy-dark' : 'text-gray-400'}`}>{step.label}</p>
+                  {active && <p className="text-sm text-swiggy-gray-dark mt-0.5">{step.desc}</p>}
                 </div>
               </div>
             )
@@ -120,47 +151,51 @@ export default function OrderTracking() {
       </div>
 
       {/* Delivery Partner Card */}
-      {currentStepIdx >= 3 && (
-        <div className="bg-white rounded-xl shadow-card p-5 mb-6">
-          <h2 className="font-bold text-swiggy-dark mb-3">Your delivery partner</h2>
+      {order.worker_name && (
+        <div className="bg-white rounded-xl shadow-card p-5 mb-6 border-l-4 border-swiggy-orange">
+          <h2 className="font-bold text-swiggy-dark mb-3">Delivery Partner</h2>
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-swiggy-orange-light rounded-full flex items-center justify-center text-xl font-bold text-swiggy-orange">
-              {(order?.worker_name || 'Ravi Kumar').charAt(0)}
+            <div className="w-14 h-14 bg-swiggy-orange-light rounded-full flex items-center justify-center text-2xl font-bold text-swiggy-orange">
+              {order.worker_name.charAt(0)}
             </div>
             <div className="flex-1">
-              <p className="font-semibold text-swiggy-dark">{order?.worker_name || 'Ravi Kumar'}</p>
+              <p className="font-bold text-swiggy-dark text-lg">{order.worker_name}</p>
               <div className="flex items-center gap-1 mt-0.5">
-                <span className="text-xs bg-swiggy-green text-white px-1.5 py-0.5 rounded font-bold">★ 4.8</span>
-                <span className="text-xs text-swiggy-gray-dark ml-1">On motorcycle</span>
+                <span className="text-xs bg-swiggy-green text-white px-1.5 py-0.5 rounded font-bold">★ 4.9</span>
+                <span className="text-xs text-swiggy-gray-dark ml-2">Verification Verified</span>
               </div>
             </div>
             <div className="flex gap-2">
-              <a href={`tel:${order?.worker_phone || ''}`}
-                className="w-10 h-10 bg-swiggy-green rounded-full flex items-center justify-center text-white hover:opacity-90">
-                <FiPhone className="w-4 h-4" />
+              <a href={`tel:${order.worker_phone || ''}`}
+                className="w-12 h-12 bg-swiggy-green rounded-full flex items-center justify-center text-white hover:bg-green-600 transition-colors shadow-lg shadow-green-100">
+                <FiPhone className="w-5 h-5" />
               </a>
-              <button className="w-10 h-10 bg-swiggy-orange rounded-full flex items-center justify-center text-white hover:opacity-90">
-                <FiMessageSquare className="w-4 h-4" />
-              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Order Details */}
+      {/* Order Summary */}
       <div className="bg-white rounded-xl shadow-card p-5">
-        <h2 className="font-bold text-swiggy-dark mb-3">Order details</h2>
-        {(order?.items || MOCK_ORDER.items).map((item) => (
-          <div key={item.id} className="flex justify-between text-sm py-1.5">
+        <h2 className="font-bold text-swiggy-dark mb-3 text-lg">Order Summary</h2>
+        {(order.items || []).map((item) => (
+          <div key={item.id} className="flex justify-between text-sm py-2 border-b border-gray-50 last:border-0">
             <span className="text-swiggy-dark">{item.quantity}x {item.name}</span>
-            <span className="font-medium">₹{item.total_price}</span>
+            <span className="font-semibold text-swiggy-dark font-mono text-xs">₹{item.total_price}</span>
           </div>
         ))}
-        <div className="border-t border-gray-100 mt-3 pt-3 space-y-1">
-          <div className="flex justify-between text-sm"><span className="text-swiggy-gray-dark">Subtotal</span><span>₹{order?.subtotal || 649}</span></div>
-          <div className="flex justify-between text-sm"><span className="text-swiggy-gray-dark">Delivery fee</span><span>₹{order?.delivery_fee || 29}</span></div>
-          <div className="flex justify-between text-sm font-bold text-swiggy-dark pt-1 border-t border-gray-100">
-            <span>Total</span><span>₹{order?.total_amount || 678}</span>
+        <div className="mt-4 space-y-2 pt-2 border-t border-gray-100">
+          <div className="flex justify-between text-sm text-swiggy-gray-dark">
+            <span>Subtotal</span>
+            <span>₹{order.subtotal}</span>
+          </div>
+          <div className="flex justify-between text-sm text-swiggy-gray-dark">
+            <span>Delivery Fee</span>
+            <span>₹{order.delivery_fee}</span>
+          </div>
+          <div className="flex justify-between text-base font-bold text-swiggy-dark pt-2 mt-2 border-t border-swiggy-dark/5">
+            <span>Total bill</span>
+            <span className="text-swiggy-orange">₹{order.total_amount}</span>
           </div>
         </div>
       </div>
@@ -168,17 +203,3 @@ export default function OrderTracking() {
   )
 }
 
-const MOCK_ORDER = {
-  order_number: 'ORD-4521',
-  status: 'delivering',
-  restaurant_name: "Domino's Pizza",
-  worker_name: 'Ravi Kumar',
-  subtotal: 649,
-  delivery_fee: 29,
-  total_amount: 678,
-  items: [
-    { id: 'i1', name: 'Margherita Pizza', quantity: 1, total_price: 249 },
-    { id: 'i2', name: 'Farmhouse Pizza', quantity: 1, total_price: 329 },
-    { id: 'i6', name: 'Garlic Bread', quantity: 1, total_price: 99 },
-  ]
-}
