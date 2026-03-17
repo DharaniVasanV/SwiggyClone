@@ -13,7 +13,7 @@ router.get('/dashboard', authenticate, requireRole('worker'), async (req, res) =
     const [statsSnapshot, allWorkerOrders, availableSnapshot, profileDoc] = await Promise.all([
       db.collection('worker_earnings').where('worker_id', '==', req.user.id).get().catch(() => ({ docs: [], size: 0 })),
       db.collection('orders').where('worker_id', '==', req.user.id).get().catch(() => ({ docs: [] })),
-      db.collection('orders').where('status', '==', 'ready').limit(10).get().catch(() => ({ docs: [] })),
+      db.collection('orders').where('status', 'in', ['ready', 'placed']).limit(20).get().catch(() => ({ docs: [] })),
       db.collection('worker_profiles').doc(req.user.id).get()
     ])
 
@@ -137,7 +137,7 @@ router.get('/orders/available', authenticate, requireRole('worker'), async (req,
     }
 
     const snapshot = await db.collection('orders')
-      .where('status', '==', 'ready')
+      .where('status', 'in', ['ready', 'placed'])
       .limit(20)
       .get()
       .catch(() => ({ docs: [] }))

@@ -165,6 +165,21 @@ router.patch('/workers/:id/verify', async (req, res) => {
   }
 })
 
+// POST /api/admin/fix-stuck-orders — patch all placed orders to ready
+router.post('/fix-stuck-orders', async (req, res) => {
+  try {
+    const snapshot = await db.collection('orders').where('status', '==', 'placed').get()
+    const batch = db.batch()
+    snapshot.docs.forEach(doc => {
+      batch.update(doc.ref, { status: 'ready', updated_at: admin.firestore.FieldValue.serverTimestamp() })
+    })
+    await batch.commit()
+    res.json({ fixed: snapshot.size, message: `${snapshot.size} orders updated to ready` })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /api/admin/orders
 router.get('/orders', async (req, res) => {
   try {
@@ -173,27 +188,24 @@ router.get('/orders', async (req, res) => {
     
     if (status) query = query.where('status', '==', status)
     
-    const snapshot = await query.orderBy('created_at', 'desc').limit(100).get().catch(err => {
-      if (err.message.includes('FAILED_PRECONDITION')) console.error('Index needed:', err.message.split('here: ')[1])
-      return { docs: [] }
-    })
+    const snapshot = await query.get().catch(() => ({ docs: [] }))
     const orders = await Promise.all(snapshot.docs.map(async doc => {
         const data = doc.data()
         const [resDoc, customerQuery, workerQuery] = await Promise.all([
-            db.collection('restaurants').doc(data.restaurant_id).get(),
-            db.collection('users').where('id', '==', data.customer_id).limit(1).get(),
-            data.worker_id ? db.collection('users').where('id', '==', data.worker_id).limit(1).get() : Promise.resolve(null)
+            db.collection('restaurants').doc(data.restaurant_id).get().catch(() => ({ data: () => ({}) })),
+            db.collection('users').where('id', '==', data.customer_id).limit(1).get().catch(() => ({ empty: true, docs: [] })),
+            data.worker_id ? db.collection('users').where('id', '==', data.worker_id).limit(1).get().catch(() => ({ empty: true, docs: [] })) : Promise.resolve(null)
         ])
-        
         return {
             ...data,
             id: doc.id,
             restaurant_name: resDoc.data()?.name,
             customer_name: customerQuery.empty ? 'Unknown' : customerQuery.docs[0].data().name,
             worker_name: (workerQuery && !workerQuery.empty) ? workerQuery.docs[0].data().name : null,
-            created_at: data.created_at?.toDate()
+            created_at: data.created_at?.toDate ? data.created_at.toDate() : null
         }
     }))
+    orders.sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
 
     res.json({ orders })
   } catch (err) {
