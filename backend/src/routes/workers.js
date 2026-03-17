@@ -318,7 +318,10 @@ router.get('/dashboard', authenticate, requireRole('worker'), async (req, res) =
     const [statsSnapshot, activeOrderSnapshot, availableSnapshot, profileDoc] = await Promise.all([
       db.collection('worker_earnings').where('worker_id', '==', req.user.id).where('earned_at', '>=', today).get(),
       db.collection('orders').where('worker_id', '==', req.user.id).where('status', 'in', ['assigned','picked_up','delivering']).limit(1).get(),
-      db.collection('orders').where('status', '==', 'ready').orderBy('created_at', 'asc').limit(10).get(),
+      db.collection('orders').where('status', '==', 'ready').orderBy('created_at', 'asc').limit(10).get().catch(err => {
+        if (err.message.includes('FAILED_PRECONDITION')) console.error('Index needed:', err.message.split('here: ')[1])
+        return { docs: [] }
+      }),
       db.collection('worker_profiles').doc(req.user.id).get()
     ])
 
@@ -353,6 +356,35 @@ router.get('/dashboard', authenticate, requireRole('worker'), async (req, res) =
       availableOrders,
       status: profileDoc.exists ? profileDoc.data().current_status : 'offline'
     })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/workers/orders — worker's order history
+router.get('/orders', authenticate, requireRole('worker'), async (req, res) => {
+  try {
+    const snapshot = await db.collection('orders')
+      .where('worker_id', '==', req.user.id)
+      .orderBy('created_at', 'desc')
+      .limit(50)
+      .get()
+      .catch(err => {
+        if (err.message.includes('FAILED_PRECONDITION')) console.error('Index needed:', err.message.split('here: ')[1])
+        throw err
+      })
+
+    const orders = await Promise.all(snapshot.docs.map(async doc => {
+      const data = doc.data()
+      const resDoc = await db.collection('restaurants').doc(data.restaurant_id).get()
+      return {
+        ...data,
+        id: doc.id,
+        restaurant_name: resDoc.data()?.name,
+        created_at: data.created_at?.toDate()
+      }
+    }))
+    res.json({ orders })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

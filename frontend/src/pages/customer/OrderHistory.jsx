@@ -4,12 +4,17 @@ import { orderAPI } from '../../services/api'
 
 export default function OrderHistory() {
   const [orders, setOrders] = useState([])
-  useEffect(() => { orderAPI.getMyOrders().then(r => setOrders(r.data.orders||[])).catch(() => setOrders(MOCK)) }, [])
+  useEffect(() => { orderAPI.getMyOrders().then(r => setOrders(r.data.orders||[])).catch(() => setOrders([])) }, [])
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
       <h1 className="text-xl font-bold text-swiggy-dark mb-5">Your Orders</h1>
-      {orders.map(o => (
+      {orders.length === 0 ? (
+        <div className="text-center py-16 text-swiggy-gray-dark">
+          <p className="font-medium">No orders yet</p>
+          <Link to="/" className="text-sm text-swiggy-orange mt-2 inline-block">Order food now →</Link>
+        </div>
+      ) : orders.map(o => (
         <div key={o.id} className="bg-white rounded-xl shadow-card p-4 mb-4">
           <div className="flex items-start justify-between mb-2">
             <div>
@@ -32,7 +37,3 @@ export default function OrderHistory() {
     </div>
   )
 }
-const MOCK = [
-  { id:'1', order_number:'ORD-4521', restaurant_name:"Domino's Pizza", status:'delivered', total_amount:678 },
-  { id:'2', order_number:'ORD-4498', restaurant_name:'Biryani Blues', status:'delivered', total_amount:420 },
-]

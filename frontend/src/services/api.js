@@ -58,6 +58,7 @@ export const workerAPI = {
   updateLocation: (lat, lng, speed) => api.post('/workers/location', { lat, lng, speed }),
   setStatus: (status) => api.patch('/workers/status', { status }),
   getMyStats: () => api.get('/workers/my-stats'),
+  getMyOrders: () => api.get('/workers/orders'),
   getMyEarnings: (period) => api.get('/workers/earnings', { params: { period } }),
   reportFailure: (orderId, data) => api.post(`/workers/orders/${orderId}/failure`, data),
   getDashboard: () => api.get('/workers/dashboard'),

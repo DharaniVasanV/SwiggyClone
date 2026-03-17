@@ -17,9 +17,10 @@ export default function WorkerOrders() {
   const [filter, setFilter] = useState('all')
 
   useEffect(() => {
-    // Placeholder — backend returns worker's order history
-    setOrders(MOCK_ORDERS)
-    setLoading(false)
+    workerAPI.getMyOrders()
+      .then(r => setOrders(r.data.orders || []))
+      .catch(() => setOrders([]))
+      .finally(() => setLoading(false))
   }, [])
 
   const filtered = filter === 'all' ? orders : orders.filter(o => o.status === filter)
@@ -69,9 +70,3 @@ export default function WorkerOrders() {
   )
 }
 
-const MOCK_ORDERS = [
-  { id: '1', order_number: 'ORD-4521', restaurant_name: "Domino's Pizza", delivery_address: '45 Anna Nagar', status: 'delivered', duration: 28, distance: 4.2, worker_earning: 85 },
-  { id: '2', order_number: 'ORD-4518', restaurant_name: 'Biryani Blues', delivery_address: '12 T Nagar', status: 'delivered', duration: 35, distance: 5.8, worker_earning: 95 },
-  { id: '3', order_number: 'ORD-4510', restaurant_name: 'KFC', delivery_address: '78 Adyar', status: 'failed', duration: 15, distance: 2.1, worker_earning: 0 },
-  { id: '4', order_number: 'ORD-4505', restaurant_name: 'McDonald\'s', delivery_address: '33 Velachery', status: 'delivered', duration: 22, distance: 3.5, worker_earning: 70 },
-]

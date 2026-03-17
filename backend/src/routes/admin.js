@@ -11,10 +11,9 @@ router.get('/dashboard', async (req, res) => {
     const today = new Date()
     today.setHours(0,0,0,0)
 
-    const [profilesSnap, ordersTodaySnap, weatherFailuresSnap, topWorkersEarningsSnap] = await Promise.all([
+    const [profilesSnap, ordersTodaySnap, topWorkersEarningsSnap] = await Promise.all([
       db.collection('worker_profiles').get(),
       db.collection('orders').where('created_at', '>=', today).get(),
-      db.collection('delivery_failures').where('created_at', '>=', today).get(), // Assuming created_at exists
       db.collection('worker_earnings').where('earned_at', '>=', today).get()
     ])
 
@@ -48,11 +47,16 @@ router.get('/dashboard', async (req, res) => {
             })
     )
 
-    const recentFailuresSnap = await db.collection('delivery_failures').orderBy('created_at', 'desc').limit(5).get()
+    const recentFailuresSnap = await db.collection('delivery_failures').orderBy('created_at', 'desc').limit(5).get().catch(() => ({ docs: [] }))
     const recent_failures = await Promise.all(recentFailuresSnap.docs.map(async d => {
         const data = d.data()
         const userQuery = await db.collection('users').where('id', '==', data.worker_id).limit(1).get()
-        return { ...data, worker_name: userQuery.empty ? 'Unknown' : userQuery.docs[0].data().name }
+        return {
+          id: d.id,
+          ...data,
+          worker_name: userQuery.empty ? 'Unknown' : userQuery.docs[0].data().name,
+          time: data.created_at?.toDate ? new Date(data.created_at.toDate()).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''
+        }
     }))
 
     res.json({
