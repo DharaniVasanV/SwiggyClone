@@ -61,37 +61,24 @@ router.get('/my', authenticate, requireRole('customer'), async (req, res) => {
   try {
     const snapshot = await db.collection('orders')
       .where('customer_id', '==', req.user.id)
-      .orderBy('created_at', 'desc')
       .get()
-      .catch(err => {
-        if (err.message.includes('FAILED_PRECONDITION')) {
-          console.error('FIX: Order History Index Needed ->', err.message.split('here: ')[1]);
-        }
-        throw err;
-      });
+      .catch(() => ({ docs: [] }))
 
     const orders = await Promise.all(snapshot.docs.map(async doc => {
         const data = doc.data()
-        // Join restaurant data
-        const resDoc = await db.collection('restaurants').doc(data.restaurant_id).get()
+        const resDoc = await db.collection('restaurants').doc(data.restaurant_id).get().catch(() => ({ data: () => ({}) }))
         const rest = resDoc.data()
-        
-        let workerName = null
-        if (data.worker_id) {
-          const userQuery = await db.collection('users').where('id', '==', data.worker_id).limit(1).get()
-          workerName = userQuery.empty ? null : userQuery.docs[0].data().name
-        }
 
         return {
           ...data,
           id: doc.id,
           restaurant_name: rest?.name,
           restaurant_image: rest?.image_url,
-          worker_name: workerName,
-          created_at: data.created_at?.toDate()
+          created_at: data.created_at?.toDate ? data.created_at.toDate() : null
         }
     }))
 
+    orders.sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
     res.json({ orders })
   } catch (err) {
     res.status(500).json({ error: err.message })
