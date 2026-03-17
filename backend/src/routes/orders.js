@@ -68,7 +68,6 @@ router.get('/my', authenticate, requireRole('customer'), async (req, res) => {
         const data = doc.data()
         const resDoc = await db.collection('restaurants').doc(data.restaurant_id).get().catch(() => ({ data: () => ({}) }))
         const rest = resDoc.data()
-
         return {
           ...data,
           id: doc.id,
@@ -85,48 +84,7 @@ router.get('/my', authenticate, requireRole('customer'), async (req, res) => {
   }
 })
 
-// GET /api/orders/:id
-router.get('/:id', authenticate, async (req, res) => {
-  try {
-    const doc = await db.collection('orders').doc(req.params.id).get()
-    if (!doc.exists) return res.status(404).json({ error: 'Order not found' })
-    const order = doc.data()
-
-    // Join data for detailed view
-    const resDoc = await db.collection('restaurants').doc(order.restaurant_id).get()
-    const rest = resDoc.data()
-    
-    let workerInfo = {}
-    if (order.worker_id) {
-      const userQuery = await db.collection('users').where('id', '==', order.worker_id).limit(1).get()
-      if (!userQuery.empty) {
-        const userData = userQuery.docs[0].data()
-        workerInfo.worker_name = userData.name
-        workerInfo.worker_phone = userData.phone
-        
-        const wpDoc = await db.collection('worker_profiles').doc(order.worker_id).get()
-        if (wpDoc.exists) {
-          const wp = wpDoc.data()
-          workerInfo.vehicle_type = wp.vehicle_type
-          workerInfo.worker_rating = wp.rating
-        }
-      }
-    }
-
-    res.json({ 
-        ...order, 
-        id: doc.id, 
-        restaurant_name: rest?.name, 
-        restaurant_address: rest?.address,
-        ...workerInfo,
-        created_at: order.created_at?.toDate()
-    })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-// GET /api/orders/:id/tracking
+// GET /api/orders/:id/tracking  — must be before /:id
 router.get('/:id/tracking', authenticate, async (req, res) => {
   try {
     const doc = await db.collection('orders').doc(req.params.id).get()
@@ -135,13 +93,12 @@ router.get('/:id/tracking', authenticate, async (req, res) => {
 
     let workerTracking = {}
     if (order.worker_id) {
-      const userQuery = await db.collection('users').where('id', '==', order.worker_id).limit(1).get()
+      const userQuery = await db.collection('users').where('id', '==', order.worker_id).limit(1).get().catch(() => ({ empty: true }))
       if (!userQuery.empty) {
         const userData = userQuery.docs[0].data()
         workerTracking.worker_name = userData.name
         workerTracking.worker_phone = userData.phone
-        
-        const wpDoc = await db.collection('worker_profiles').doc(order.worker_id).get()
+        const wpDoc = await db.collection('worker_profiles').doc(order.worker_id).get().catch(() => ({ exists: false }))
         if (wpDoc.exists) {
           const wp = wpDoc.data()
           workerTracking.worker_lat = wp.current_lat
@@ -152,18 +109,42 @@ router.get('/:id/tracking', authenticate, async (req, res) => {
     }
 
     const gpsSnapshot = await db.collection('orders').doc(req.params.id).collection('gps_logs')
-      .orderBy('recorded_at', 'desc')
-      .limit(50)
-      .get()
-    const gpsTrail = gpsSnapshot.docs.map(d => ({ ...d.data(), recorded_at: d.data().recorded_at?.toDate() }))
+      .limit(50).get().catch(() => ({ docs: [] }))
+    const gpsTrail = gpsSnapshot.docs.map(d => ({ ...d.data(), recorded_at: d.data().recorded_at?.toDate ? d.data().recorded_at.toDate() : null }))
 
-    res.json({ 
-        ...order, 
-        id: doc.id, 
-        ...workerTracking,
-        gps_trail: gpsTrail,
-        created_at: order.created_at?.toDate()
-    })
+    res.json({ ...order, id: doc.id, ...workerTracking, gps_trail: gpsTrail, created_at: order.created_at?.toDate ? order.created_at.toDate() : null })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/orders/:id
+router.get('/:id', authenticate, async (req, res) => {
+  try {
+    const doc = await db.collection('orders').doc(req.params.id).get()
+    if (!doc.exists) return res.status(404).json({ error: 'Order not found' })
+    const order = doc.data()
+
+    const resDoc = await db.collection('restaurants').doc(order.restaurant_id).get().catch(() => ({ data: () => ({}) }))
+    const rest = resDoc.data()
+
+    let workerInfo = {}
+    if (order.worker_id) {
+      const userQuery = await db.collection('users').where('id', '==', order.worker_id).limit(1).get().catch(() => ({ empty: true }))
+      if (!userQuery.empty) {
+        const userData = userQuery.docs[0].data()
+        workerInfo.worker_name = userData.name
+        workerInfo.worker_phone = userData.phone
+        const wpDoc = await db.collection('worker_profiles').doc(order.worker_id).get().catch(() => ({ exists: false }))
+        if (wpDoc.exists) {
+          const wp = wpDoc.data()
+          workerInfo.vehicle_type = wp.vehicle_type
+          workerInfo.worker_rating = wp.rating
+        }
+      }
+    }
+
+    res.json({ ...order, id: doc.id, restaurant_name: rest?.name, restaurant_address: rest?.address, ...workerInfo, created_at: order.created_at?.toDate ? order.created_at.toDate() : null })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

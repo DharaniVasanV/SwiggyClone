@@ -25,7 +25,7 @@ export default function OrderHistory() {
           </div>
           <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
             <span className="text-sm font-bold text-swiggy-dark">₹{o.total_amount}</span>
-            {(o.status === 'delivering' || o.status === 'assigned') && (
+            {['placed','confirmed','preparing','assigned','picked_up','delivering'].includes(o.status) && (
               <Link to={`/order/${o.id}/track`} className="text-xs bg-swiggy-orange text-white px-3 py-1.5 rounded-lg font-medium">Track Order</Link>
             )}
             {o.status === 'delivered' && (
