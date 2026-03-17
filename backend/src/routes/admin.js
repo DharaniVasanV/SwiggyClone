@@ -1,0 +1,331 @@
+const express = require('express')
+const router = express.Router()
+const { db, admin } = require('../utils/firebase')
+const { authenticate, requireRole } = require('../middleware/auth')
+
+router.use(authenticate, requireRole('admin'))
+
+// GET /api/admin/dashboard
+router.get('/dashboard', async (req, res) => {
+  try {
+    const today = new Date()
+    today.setHours(0,0,0,0)
+
+    const [profilesSnap, ordersTodaySnap, weatherFailuresSnap, topWorkersEarningsSnap] = await Promise.all([
+      db.collection('worker_profiles').get(),
+      db.collection('orders').where('created_at', '>=', today).get(),
+      db.collection('delivery_failures').where('created_at', '>=', today).get(), // Assuming created_at exists
+      db.collection('worker_earnings').where('earned_at', '>=', today).get()
+    ])
+
+    const total_workers = profilesSnap.size
+    const active_workers = profilesSnap.docs.filter(d => d.data().current_status !== 'offline').length
+    const pending_verification = profilesSnap.docs.filter(d => d.data().verification_status === 'pending').length
+
+    const orders_today = ordersTodaySnap.size
+    const delivered_today = ordersTodaySnap.docs.filter(d => d.data().status === 'delivered').length
+    const failed_today = ordersTodaySnap.docs.filter(d => d.data().status === 'failed').length
+    const success_rate = orders_today ? (delivered_today * 100 / orders_today).toFixed(1) : 0
+
+
+    // Top Workers Aggregation
+    const workerStats = topWorkersEarningsSnap.docs.reduce((acc, d) => {
+        const data = d.data()
+        if (!acc[data.worker_id]) acc[data.worker_id] = { id: data.worker_id, earnings: 0, distance: 0, orders: 0 }
+        acc[data.worker_id].earnings += data.total_earning
+        acc[data.worker_id].distance += data.distance_km
+        acc[data.worker_id].orders++
+        return acc
+    }, {})
+
+    const top_workers = await Promise.all(
+        Object.values(workerStats)
+            .sort((a, b) => b.earnings - a.earnings)
+            .slice(0, 5)
+            .map(async w => {
+                const userQuery = await db.collection('users').where('id', '==', w.id).limit(1).get()
+                return { ...w, name: userQuery.empty ? 'Unknown' : userQuery.docs[0].data().name }
+            })
+    )
+
+    const recentFailuresSnap = await db.collection('delivery_failures').orderBy('created_at', 'desc').limit(5).get()
+    const recent_failures = await Promise.all(recentFailuresSnap.docs.map(async d => {
+        const data = d.data()
+        const userQuery = await db.collection('users').where('id', '==', data.worker_id).limit(1).get()
+        return { ...data, worker_name: userQuery.empty ? 'Unknown' : userQuery.docs[0].data().name }
+    }))
+
+    res.json({
+      total_workers, active_workers, pending_verification,
+      orders_today, delivered_today, failed_today, success_rate,
+      top_workers,
+      recent_failures
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/admin/workers
+router.get('/workers', async (req, res) => {
+  try {
+    const { status, verification } = req.query
+    let query = db.collection('worker_profiles')
+    if (verification) query = query.where('verification_status', '==', verification)
+    if (status) query = query.where('current_status', '==', status)
+
+    const snapshot = await query.get()
+    const workers = await Promise.all(snapshot.docs.map(async doc => {
+        const wp = doc.data()
+        const userQuery = await db.collection('users').where('id', '==', wp.user_id).limit(1).get()
+        const user = userQuery.empty ? {} : userQuery.docs[0].data()
+        
+        return {
+            id: wp.user_id,
+            name: user.name,
+            email: user.email,
+            phone: user.phone,
+            created_at: user.created_at?.toDate(),
+            is_verified: user.is_verified,
+            ...wp,
+            total_deliveries: wp.total_deliveries || 0,
+            rating: wp.rating || 0
+        }
+    }))
+
+    res.json({ workers: workers.sort((a,b) => b.created_at - a.created_at) })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/admin/workers/:id
+router.get('/workers/:id', async (req, res) => {
+  try {
+    const userQuery = await db.collection('users').where('id', '==', req.params.id).limit(1).get()
+    if (userQuery.empty) return res.status(404).json({ error: 'Worker not found' })
+    const user = userQuery.docs[0].data()
+    
+    const wpDoc = await db.collection('worker_profiles').doc(req.params.id).get()
+    const wp = wpDoc.exists ? wpDoc.data() : {}
+
+    const [ordersSnap, earningsSnap, gpsLastSnap] = await Promise.all([
+      db.collection('orders').where('worker_id', '==', req.params.id).get(),
+      db.collection('worker_earnings').where('worker_id', '==', req.params.id).get(),
+      db.collectionGroup('gps_logs').where('worker_id', '==', req.params.id).orderBy('recorded_at', 'desc').limit(1).get()
+    ])
+
+    const orderStats = {
+        total: ordersSnap.size,
+        delivered: ordersSnap.docs.filter(d => d.data().status === 'delivered').length,
+        failed: ordersSnap.docs.filter(d => d.data().status === 'failed').length
+    }
+    
+    const earnings = earningsSnap.docs.map(d => d.data())
+    const earningStats = {
+        total: earnings.reduce((sum, e) => sum + (e.total_earning || 0), 0),
+        avg_per_order: earnings.length ? earnings.reduce((sum, e) => sum + (e.total_earning || 0), 0) / earnings.length : 0,
+        total_distance: earnings.reduce((sum, e) => sum + (e.distance_km || 0), 0)
+    }
+
+    res.json({ 
+        worker: { ...user, ...wp }, 
+        orderStats, 
+        earningStats, 
+        lastLocation: gpsLastSnap.empty ? null : gpsLastSnap.docs[0].data() 
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PATCH /api/admin/workers/:id/verify
+router.patch('/workers/:id/verify', async (req, res) => {
+  try {
+    const { status } = req.body
+    await db.collection('worker_profiles').doc(req.params.id).update({
+        verification_status: status,
+        verified_at: admin.firestore.FieldValue.serverTimestamp(),
+        verified_by: req.user.id
+    })
+    
+    if (status === 'verified') {
+        const userQuery = await db.collection('users').where('id', '==', req.params.id).limit(1).get()
+        if (!userQuery.empty) {
+            await userQuery.docs[0].ref.update({ is_verified: true })
+        }
+    }
+    res.json({ message: `Worker ${status}` })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/admin/orders
+router.get('/orders', async (req, res) => {
+  try {
+    const { status, date } = req.query
+    let query = db.collection('orders')
+    
+    if (status) query = query.where('status', '==', status)
+    
+    const snapshot = await query.orderBy('created_at', 'desc').limit(100).get()
+    const orders = await Promise.all(snapshot.docs.map(async doc => {
+        const data = doc.data()
+        const [resDoc, customerQuery, workerQuery] = await Promise.all([
+            db.collection('restaurants').doc(data.restaurant_id).get(),
+            db.collection('users').where('id', '==', data.customer_id).limit(1).get(),
+            data.worker_id ? db.collection('users').where('id', '==', data.worker_id).limit(1).get() : Promise.resolve(null)
+        ])
+        
+        return {
+            ...data,
+            id: doc.id,
+            restaurant_name: resDoc.data()?.name,
+            customer_name: customerQuery.empty ? 'Unknown' : customerQuery.docs[0].data().name,
+            worker_name: (workerQuery && !workerQuery.empty) ? workerQuery.docs[0].data().name : null,
+            created_at: data.created_at?.toDate()
+        }
+    }))
+
+    res.json({ orders })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/admin/live-workers
+router.get('/live-workers', async (req, res) => {
+  try {
+    const snapshot = await db.collection('worker_profiles')
+        .where('current_status', '!=', 'offline')
+        .get()
+
+    const workers = await Promise.all(snapshot.docs.map(async doc => {
+        const wp = doc.data()
+        const userQuery = await db.collection('users').where('id', '==', wp.user_id).limit(1).get()
+        const user = userQuery.empty ? {} : userQuery.docs[0].data()
+        
+        const activeOrderSnap = await db.collection('orders')
+            .where('worker_id', '==', wp.user_id)
+            .where('status', 'in', ['assigned','picked_up','delivering'])
+            .limit(1)
+            .get()
+        
+        const activeOrder = activeOrderSnap.empty ? null : activeOrderSnap.docs[0].data()
+
+        return {
+            id: wp.user_id,
+            name: user.name,
+            phone: user.phone,
+            ...wp,
+            active_order_id: activeOrder?.id,
+            order_number: activeOrder?.order_number,
+            delivery_address: activeOrder?.delivery_address,
+            last_location_update: wp.last_location_update?.toDate()
+        }
+    }))
+
+    res.json({ workers: workers.sort((a,b) => b.last_location_update - a.last_location_update) })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/admin/analytics
+router.get('/analytics', async (req, res) => {
+  try {
+    const { days = 7 } = req.query
+    const startDate = new Date()
+    startDate.setDate(startDate.getDate() - parseInt(days))
+
+    const ordersSnap = await db.collection('orders').where('created_at', '>=', startDate).get()
+    const orders = ordersSnap.docs.map(d => ({ ...d.data(), created_at: d.data().created_at?.toDate() }))
+
+    // Grouping by daily
+    const dailyMap = orders.reduce((acc, o) => {
+        const date = o.created_at.toISOString().split('T')[0]
+        if (!acc[date]) acc[date] = { date, orders: 0, delivered: 0, failed: 0, revenue: 0 }
+        acc[date].orders++
+        if (o.status === 'delivered') acc[date].delivered++
+        if (o.status === 'failed') acc[date].failed++
+        acc[date].revenue += (o.total_amount || 0)
+        return acc
+    }, {})
+
+    // Zones
+    const zoneMap = orders.reduce((acc, o) => {
+        const zone = o.delivery_zone || 'Unknown'
+        if (!acc[zone]) acc[zone] = { delivery_zone: zone, orders: 0, total_duration: 0, count_duration: 0 }
+        acc[zone].orders++
+        if (o.actual_duration_min) {
+            acc[zone].total_duration += o.actual_duration_min
+            acc[zone].count_duration++
+        }
+        return acc
+    }, {})
+    const zones = Object.values(zoneMap).map(z => ({ 
+        ...z, 
+        avg_duration: z.count_duration ? z.total_duration / z.count_duration : 0 
+    }))
+
+    // Peak Hours
+    const hourMap = orders.reduce((acc, o) => {
+        const hour = o.created_at.getHours()
+        acc[hour] = (acc[hour] || 0) + 1
+        return acc
+    }, {})
+    const peakHours = Object.keys(hourMap).map(h => ({ hour: parseInt(h), orders: hourMap[h] }))
+
+
+    res.json({ daily: Object.values(dailyMap), zones, peakHours })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+
+// GET /api/admin/failures
+router.get('/failures', async (req, res) => {
+  try {
+    const snapshot = await db.collection('delivery_failures').orderBy('created_at', 'desc').get()
+    const failures = await Promise.all(snapshot.docs.map(async doc => {
+        const data = doc.data()
+        const [orderDoc, userQuery] = await Promise.all([
+            db.collection('orders').doc(data.order_id).get(),
+            db.collection('users').where('id', '==', data.worker_id).limit(1).get()
+        ])
+        const o = orderDoc.exists ? orderDoc.data() : null
+        return {
+            ...data,
+            id: doc.id,
+            order_number: o?.order_number,
+            delivery_zone: o?.delivery_zone,
+            worker_name: userQuery.empty ? 'Unknown' : userQuery.docs[0].data().name,
+            reported_at: data.created_at?.toDate()
+        }
+    }))
+    res.json({ failures })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/admin/restaurants
+router.post('/restaurants', async (req, res) => {
+  try {
+    const { name, cuisine_type, address, lat, lng, zone } = req.body
+    const orderId = db.collection('restaurants').doc().id
+    const data = {
+        name, cuisine_type, address, lat, lng, zone,
+        is_active: true,
+        created_at: admin.firestore.FieldValue.serverTimestamp()
+    }
+    await db.collection('restaurants').doc(orderId).set(data)
+    res.status(201).json({ id: orderId, ...data })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+module.exports = router

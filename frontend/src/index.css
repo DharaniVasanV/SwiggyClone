@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', sans-serif; background: #fff; color: #282c3f; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: #f4f4f4; }
+  ::-webkit-scrollbar-thumb { background: #d4d5d9; border-radius: 3px; }
+}
+
+@layer components {
+  .btn-orange {
+    @apply bg-swiggy-orange text-white font-semibold px-6 py-3 rounded hover:bg-swiggy-orange-dark transition-colors;
+  }
+  .btn-outline-orange {
+    @apply border border-swiggy-orange text-swiggy-orange font-semibold px-6 py-3 rounded hover:bg-swiggy-orange-light transition-colors;
+  }
+  .card {
+    @apply bg-white rounded-lg shadow-card hover:shadow-card-hover transition-shadow cursor-pointer;
+  }
+  .input-field {
+    @apply w-full border border-gray-300 rounded px-4 py-3 text-sm focus:outline-none focus:border-swiggy-orange text-swiggy-dark;
+  }
+  .badge-veg {
+    @apply inline-flex items-center justify-center w-4 h-4 border-2 border-swiggy-green rounded-sm;
+  }
+  .badge-nonveg {
+    @apply inline-flex items-center justify-center w-4 h-4 border-2 border-red-600 rounded-sm;
+  }
+  .section-title {
+    @apply text-xl font-bold text-swiggy-dark mb-4;
+  }
+}
+
+/* Swiggy-style shimmer loading */
+@keyframes shimmer {
+  0% { background-position: -1000px 0; }
+  100% { background-position: 1000px 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, #f4f4f4 25%, #e8e8e8 50%, #f4f4f4 75%);
+  background-size: 1000px 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Swiggy orange pulse for live tracking */
+@keyframes pulse-orange {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(252,128,25,0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(252,128,25,0); }
+}
+.pulse-orange { animation: pulse-orange 1.5s infinite; }
+
+/* Bottom nav active indicator */
+.nav-active { color: #FC8019; border-top: 2px solid #FC8019; }
