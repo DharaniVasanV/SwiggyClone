@@ -27,8 +27,10 @@ api.interceptors.response.use(
 export const authAPI = {
   login: (data) => api.post('/auth/login', data),
   register: (data) => api.post('/auth/register', data),
+  restaurantRegister: (data) => api.post('/auth/restaurant-register', data),
   sendOtp: (phone) => api.post('/auth/send-otp', { phone }),
   verifyOtp: (phone, code) => api.post('/auth/verify-otp', { phone, code }),
+  getWorkerZones: () => api.get('/auth/worker-zones'),
   workerRegister: (data) => api.post('/auth/worker-register', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
   getMe: () => api.get('/auth/me'),
 }
@@ -41,6 +43,14 @@ export const restaurantAPI = {
   search: (q) => api.get('/restaurants/search', { params: { q } }),
 }
 
+export const restaurantManagerAPI = {
+  getStatus: () => api.get('/restaurants/me/status'),
+  getDashboard: () => api.get('/restaurants/me/dashboard'),
+  addMenuItem: (data) => api.post('/restaurants/me/menu', data),
+  updateMenuItem: (itemId, data) => api.patch(`/restaurants/me/menu/${itemId}`, data),
+  markOrderPickedUp: (orderId) => api.patch(`/restaurants/me/orders/${orderId}/pickup`),
+}
+
 // ORDERS
 export const orderAPI = {
   place: (data) => api.post('/orders', data),
@@ -48,6 +58,7 @@ export const orderAPI = {
   getMyOrders: () => api.get('/orders/my'),
   cancel: (id) => api.patch(`/orders/${id}/cancel`),
   getTracking: (id) => api.get(`/orders/${id}/tracking`),
+  submitReview: (id, data) => api.post(`/orders/${id}/review`, data),
 }
 
 // WORKER
@@ -68,6 +79,12 @@ export const workerAPI = {
 // ADMIN
 export const adminAPI = {
   getDashboard: () => api.get('/admin/dashboard'),
+  getExternalAccessKey: () => api.get('/admin/external-access/key'),
+  generateExternalAccessKey: () => api.post('/admin/external-access/key/generate'),
+  getZones: () => api.get('/admin/zones'),
+  addZone: (zone_name, daily_target_orders = 0) => api.post('/admin/zones', { zone_name, daily_target_orders }),
+  updateZone: (id, data) => api.patch(`/admin/zones/${id}`, data),
+  deleteZone: (id) => api.delete(`/admin/zones/${id}`),
   getWorkers: (params) => api.get('/admin/workers', { params }),
   getWorkerDetail: (id) => api.get(`/admin/workers/${id}`),
   verifyWorker: (id, status) => api.patch(`/admin/workers/${id}/verify`, { status }),
@@ -77,6 +94,16 @@ export const adminAPI = {
   getFailures: () => api.get('/admin/failures'),
   getRestaurants: () => api.get('/admin/restaurants'),
   addRestaurant: (data) => api.post('/admin/restaurants', data),
+  verifyRestaurant: (id, status) => api.patch(`/admin/restaurants/${id}/verify`, { status }),
+  deleteRestaurant: (id) => api.delete(`/admin/restaurants/${id}`),
+  deleteWorker: (id) => api.delete(`/admin/workers/${id}`),
+}
+
+export const externalAccessAPI = {
+  getWorkers: (apiKey, limit) => api.get('/external/workers', { params: { limit }, headers: { 'x-api-key': apiKey } }),
+  getWorkerProfiles: (apiKey, limit) => api.get('/external/worker-profiles', { params: { limit }, headers: { 'x-api-key': apiKey } }),
+  getWorkerEarnings: (apiKey, limit) => api.get('/external/worker-earnings', { params: { limit }, headers: { 'x-api-key': apiKey } }),
+  getOrders: (apiKey, limit) => api.get('/external/orders', { params: { limit }, headers: { 'x-api-key': apiKey } }),
 }
 
 export default api

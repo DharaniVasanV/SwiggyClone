@@ -4,6 +4,99 @@ const { db, admin } = require('../utils/firebase')
 const { authenticate, requireRole } = require('../middleware/auth')
 const { getIO } = require('../websocket/socket')
 
+const twilio = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
+  ? require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+  : null
+
+const normalizeZone = (value) => (value || '').trim().toLowerCase()
+const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString()
+const orderMatchesWorkerZone = (order, workerZone) => {
+  const normalizedWorkerZone = normalizeZone(workerZone)
+  if (!normalizedWorkerZone) return false
+  return normalizeZone(order.delivery_zone) === normalizedWorkerZone &&
+    normalizeZone(order.restaurant_zone) === normalizedWorkerZone
+}
+
+const sendDeliveryOtp = async ({ orderId, customerPhone, orderNumber }) => {
+  const otp = generateOtp()
+
+  await db.collection('otp_codes').add({
+    phone: customerPhone,
+    code: otp,
+    order_id: orderId,
+    purpose: 'delivery_completion',
+    expires_at: new Date(Date.now() + 30 * 60 * 1000),
+    used: false,
+    created_at: new Date()
+  })
+
+  console.log(`Delivery OTP for order ${orderNumber || orderId} (${customerPhone}): ${otp}`)
+
+  if (twilio && process.env.TWILIO_PHONE && customerPhone) {
+    try {
+      await twilio.messages.create({
+        body: `Your Swiggy delivery OTP for order ${orderNumber || orderId} is ${otp}`,
+        from: process.env.TWILIO_PHONE,
+        to: customerPhone
+      })
+    } catch (error) {
+      console.error('Twilio delivery OTP error:', error.message)
+    }
+  }
+
+  return otp
+}
+
+const verifyDeliveryOtp = async ({ orderId, code }) => {
+  const now = new Date()
+  const snapshot = await db.collection('otp_codes')
+    .where('order_id', '==', orderId)
+    .get()
+
+  const validDoc = snapshot.docs
+    .filter((doc) => {
+      const data = doc.data()
+      const expiresAt = data.expires_at?.toDate ? data.expires_at.toDate() : new Date(data.expires_at)
+      return data.purpose === 'delivery_completion' && data.code === code && data.used === false && expiresAt > now
+    })
+    .sort((a, b) => {
+      const tA = a.data().created_at?.toDate ? a.data().created_at.toDate() : new Date(a.data().created_at)
+      const tB = b.data().created_at?.toDate ? b.data().created_at.toDate() : new Date(b.data().created_at)
+      return tB - tA
+    })[0]
+
+  if (!validDoc) return false
+
+  await validDoc.ref.update({
+    used: true,
+    used_at: admin.firestore.FieldValue.serverTimestamp()
+  })
+
+  return true
+}
+
+const getZoneTargetOrders = async (zoneName) => {
+  if (!zoneName) return 0
+
+  const snapshot = await db.collection('delivery_zones').get().catch(() => ({ docs: [] }))
+  const zoneDoc = snapshot.docs.find((doc) => normalizeZone(doc.data()?.zone_name) === normalizeZone(zoneName))
+  return Math.max(0, Number(zoneDoc?.data()?.daily_target_orders || 0))
+}
+
+const getTodayDeliveredCount = async (workerId) => {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const snapshot = await db.collection('worker_earnings')
+    .where('worker_id', '==', workerId)
+    .get()
+    .catch(() => ({ docs: [] }))
+
+  return snapshot.docs.filter((doc) => {
+    const earnedAt = doc.data().earned_at?.toDate ? doc.data().earned_at.toDate() : new Date(doc.data().earned_at)
+    return earnedAt >= today
+  }).length
+}
+
 // GET /api/workers/dashboard
 router.get('/dashboard', authenticate, requireRole('worker'), async (req, res) => {
   try {
@@ -44,10 +137,24 @@ router.get('/dashboard', authenticate, requireRole('worker'), async (req, res) =
     const availableOrders = await Promise.all(availableSnapshot.docs.map(async d => {
       const orderData = d.data()
       const resDoc = await db.collection('restaurants').doc(orderData.restaurant_id).get().catch(() => ({ data: () => ({}) }))
-      return { ...orderData, id: d.id, restaurant_name: resDoc.data()?.name }
+      const restaurant = resDoc.data() || {}
+      return {
+        ...orderData,
+        id: d.id,
+        restaurant_name: restaurant.name,
+        restaurant_zone: orderData.restaurant_zone || restaurant.zone || null
+      }
     }))
 
-    res.json({ stats, activeOrder, availableOrders, status: profileData.current_status || 'offline', verificationStatus: profileData.verification_status || 'pending' })
+    const zoneMatchedOrders = availableOrders.filter(order => orderMatchesWorkerZone(order, profileData.zone))
+
+    res.json({
+      stats,
+      activeOrder,
+      availableOrders: zoneMatchedOrders,
+      status: profileData.current_status || 'offline',
+      verificationStatus: profileData.verification_status || 'pending'
+    })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -59,22 +166,34 @@ router.get('/my-stats', authenticate, requireRole('worker'), async (req, res) =>
     const today = new Date()
     today.setHours(0,0,0,0)
 
-    const [allOrders, allEarnings] = await Promise.all([
+    const [allOrders, allEarnings, profileDoc] = await Promise.all([
       db.collection('orders').where('worker_id', '==', req.user.id).get().catch(() => ({ docs: [] })),
-      db.collection('worker_earnings').where('worker_id', '==', req.user.id).get().catch(() => ({ docs: [] }))
+      db.collection('worker_earnings').where('worker_id', '==', req.user.id).get().catch(() => ({ docs: [] })),
+      db.collection('worker_profiles').doc(req.user.id).get().catch(() => ({ exists: false, data: () => ({}) }))
     ])
+
+    const workerZone = profileDoc.exists ? profileDoc.data()?.zone : null
+    const dailyTargetOrders = await getZoneTargetOrders(workerZone)
 
     const todayEarningDocs = allEarnings.docs.filter(d => {
       const t = d.data().earned_at?.toDate ? d.data().earned_at.toDate() : new Date(d.data().earned_at)
       return t >= today
     })
 
+    const todayOrders = todayEarningDocs.length
+    const dailyCompletionRate = dailyTargetOrders > 0
+      ? Number(Math.min(100, (todayOrders / dailyTargetOrders) * 100).toFixed(0))
+      : null
+
     res.json({
-      today_orders: todayEarningDocs.length,
+      today_orders: todayOrders,
       today_earnings: todayEarningDocs.reduce((sum, d) => sum + (d.data().total_earning || 0), 0),
       total_deliveries: allOrders.docs.filter(d => d.data().status === 'delivered').length,
       lifetime_earnings: allEarnings.docs.reduce((sum, d) => sum + (d.data().total_earning || 0), 0),
-      today_distance: todayEarningDocs.reduce((sum, d) => sum + (d.data().distance_km || 0), 0)
+      today_distance: todayEarningDocs.reduce((sum, d) => sum + (d.data().distance_km || 0), 0),
+      worker_zone: workerZone || null,
+      daily_target_orders: dailyTargetOrders,
+      daily_completion_rate: dailyCompletionRate
     })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -135,6 +254,7 @@ router.get('/orders/available', authenticate, requireRole('worker'), async (req,
     if (!profileDoc.exists || profileDoc.data().verification_status !== 'verified') {
       return res.status(403).json({ error: 'Worker not verified' })
     }
+    const workerZone = profileDoc.data().zone
 
     const snapshot = await db.collection('orders')
       .where('status', 'in', ['ready', 'placed'])
@@ -150,12 +270,13 @@ router.get('/orders/available', authenticate, requireRole('worker'), async (req,
         id: doc.id,
         ...data,
         restaurant_name: rest?.name,
+        restaurant_zone: data.restaurant_zone || rest?.zone || null,
         restaurant_image: rest?.image_url,
         created_at: data.created_at?.toDate ? data.created_at.toDate() : null
       }
     }))
 
-    res.json({ orders })
+    res.json({ orders: orders.filter(order => orderMatchesWorkerZone(order, workerZone)) })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -222,12 +343,16 @@ router.post('/orders/:id/accept', authenticate, requireRole('worker'), async (re
     if (!profileDoc.exists || profileDoc.data().verification_status !== 'verified') {
       return res.status(403).json({ error: 'Worker not verified' })
     }
+    const workerZone = profileDoc.data().zone
 
     const orderRef = db.collection('orders').doc(req.params.id)
     const result = await db.runTransaction(async (transaction) => {
       const orderDoc = await transaction.get(orderRef)
       if (!orderDoc.exists || !['ready','placed'].includes(orderDoc.data().status) || orderDoc.data().worker_id) {
         throw new Error('Order no longer available')
+      }
+      if (!orderMatchesWorkerZone(orderDoc.data(), workerZone)) {
+        throw new Error('Order is outside this worker zone')
       }
       const updateData = {
         worker_id: req.user.id,
@@ -247,14 +372,15 @@ router.post('/orders/:id/accept', authenticate, requireRole('worker'), async (re
 
     res.json({ order: result })
   } catch (err) {
-    res.status(err.message === 'Order no longer available' ? 409 : 500).json({ error: err.message })
+    const status = ['Order no longer available', 'Order is outside this worker zone'].includes(err.message) ? 409 : 500
+    res.status(status).json({ error: err.message })
   }
 })
 
 // PATCH /api/workers/orders/:id/status
 router.patch('/orders/:id/status', authenticate, requireRole('worker'), async (req, res) => {
   try {
-    const { status } = req.body
+    const { status, delivery_otp } = req.body
     const validStatuses = ['picked_up', 'delivering', 'delivered']
     if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' })
 
@@ -265,18 +391,57 @@ router.patch('/orders/:id/status', authenticate, requireRole('worker'), async (r
     }
     const order = orderDoc.data()
 
+    if (status === 'delivered') {
+      if (!delivery_otp) {
+        return res.status(400).json({ error: 'Customer delivery OTP is required' })
+      }
+
+      const isValidOtp = await verifyDeliveryOtp({ orderId: req.params.id, code: String(delivery_otp).trim() })
+      if (!isValidOtp) {
+        return res.status(400).json({ error: 'Invalid or expired customer delivery OTP' })
+      }
+    }
+
     const updateData = { status, updated_at: admin.firestore.FieldValue.serverTimestamp() }
-    if (status === 'picked_up') updateData.picked_up_at = admin.firestore.FieldValue.serverTimestamp()
-    if (status === 'delivered') updateData.delivered_at = admin.firestore.FieldValue.serverTimestamp()
+    let responseMessage = 'Status updated'
+    if (status === 'picked_up') {
+      updateData.picked_up_at = admin.firestore.FieldValue.serverTimestamp()
+      const customerQuery = await db.collection('users').where('id', '==', order.customer_id).limit(1).get().catch(() => ({ empty: true, docs: [] }))
+      const customerPhone = customerQuery.empty ? null : customerQuery.docs[0].data()?.phone
+      const otp = await sendDeliveryOtp({ orderId: req.params.id, customerPhone, orderNumber: order.order_number })
+      updateData.delivery_otp_sent_at = admin.firestore.FieldValue.serverTimestamp()
+      responseMessage = 'Pickup confirmed. Delivery OTP sent to customer.'
+      if (!twilio || !process.env.TWILIO_PHONE) {
+        responseMessage += ` OTP: ${otp}`
+      }
+    }
+    if (status === 'delivered') {
+      updateData.delivered_at = admin.firestore.FieldValue.serverTimestamp()
+      updateData.delivery_otp_verified_at = admin.firestore.FieldValue.serverTimestamp()
+      responseMessage = 'Delivery completed'
+    }
 
     await orderRef.update(updateData)
 
     if (status === 'delivered') {
+      const profileDoc = await db.collection('worker_profiles').doc(req.user.id).get().catch(() => ({ exists: false, data: () => ({}) }))
+      const workerZone = profileDoc.exists ? profileDoc.data()?.zone : null
+      const zoneTargetOrders = await getZoneTargetOrders(workerZone)
+      const deliveredToday = await getTodayDeliveredCount(req.user.id)
+      const baseEarning = Number(order.worker_earning || 0)
+      const incentiveApplied = zoneTargetOrders > 0 && (deliveredToday + 1) >= zoneTargetOrders
+      const incentiveBonus = incentiveApplied ? (2 * baseEarning) : 0
+      const totalEarning = baseEarning + incentiveBonus
+
       await db.collection('worker_earnings').add({
         worker_id: req.user.id,
         order_id: req.params.id,
-        base_earning: order.worker_earning || 0,
-        total_earning: order.worker_earning || 0,
+        zone: workerZone || null,
+        zone_target_orders: zoneTargetOrders,
+        incentive_applied: incentiveApplied,
+        incentive_bonus: incentiveBonus,
+        base_earning: baseEarning,
+        total_earning: totalEarning,
         distance_km: order.actual_distance_km || 0,
         duration_min: order.actual_duration_min || 0,
         earned_at: admin.firestore.FieldValue.serverTimestamp()
@@ -289,7 +454,7 @@ router.patch('/orders/:id/status', authenticate, requireRole('worker'), async (r
 
     const io = getIO()
     io?.to(`order:${req.params.id}`).emit(`order:${req.params.id}:status`, { status })
-    res.json({ order: { ...order, ...updateData } })
+    res.json({ order: { ...order, ...updateData }, message: responseMessage })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

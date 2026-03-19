@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
+const crypto = require('crypto')
 const { v4: uuidv4 } = require('uuid')
 const { db } = require('../utils/firebase')
 const { authenticate } = require('../middleware/auth')
@@ -12,14 +13,84 @@ const twilio = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
   ? require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
   : null
 
-const storage = multer.diskStorage({
-  destination: 'uploads/id-proofs/',
-  filename: (req, file, cb) => cb(null, `${uuidv4()}${path.extname(file.originalname)}`)
-})
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } })
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } })
 
 const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString()
-const signToken = (user) => jwt.sign({ id: user.id, role: user.role, name: user.name, email: user.email }, process.env.JWT_SECRET, { expiresIn: '30d' })
+const signToken = (user) => jwt.sign({
+  id: user.id,
+  role: user.role,
+  name: user.name,
+  email: user.email,
+  restaurant_id: user.restaurant_id || null
+}, process.env.JWT_SECRET, { expiresIn: '30d' })
+
+const uploadWorkerProofToCloudinary = async (file, folder) => {
+  if (!file) return null
+
+  const cloudName = (process.env.CLOUDINARY_CLOUD_NAME || '').trim()
+  const apiKey = (process.env.CLOUDINARY_API_KEY || '').trim()
+  const apiSecret = (process.env.CLOUDINARY_API_SECRET || '').trim()
+
+  if (!cloudName || !apiKey || !apiSecret) {
+    throw new Error('Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET.')
+  }
+
+  const extension = path.extname(file.originalname || '') || ''
+  const publicId = `${uuidv4()}${extension}`
+  const timestamp = Math.floor(Date.now() / 1000)
+  const signaturePayload = `folder=${folder}&public_id=${publicId}&timestamp=${timestamp}${apiSecret}`
+  const signature = crypto.createHash('sha1').update(signaturePayload).digest('hex')
+
+  const formData = new FormData()
+  const blob = new Blob([file.buffer], { type: file.mimetype || 'application/octet-stream' })
+  formData.append('file', blob, file.originalname || `${uuidv4()}${extension}`)
+  formData.append('api_key', apiKey)
+  formData.append('timestamp', String(timestamp))
+  formData.append('signature', signature)
+  formData.append('folder', folder)
+  formData.append('public_id', publicId)
+  formData.append('resource_type', 'auto')
+
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
+    method: 'POST',
+    body: formData
+  })
+
+  const data = await response.json()
+  if (!response.ok) {
+    throw new Error(`Cloudinary upload failed: ${data?.error?.message || 'Unknown error'}`)
+  }
+
+  return data.secure_url || data.url || null
+}
+
+const getAvailableZones = async () => {
+  const zoneSnapshot = await db.collection('delivery_zones').get().catch(() => ({ docs: [] }))
+  const managedZones = zoneSnapshot.docs
+    .map(doc => ({ id: doc.id, ...doc.data() }))
+    .filter(zone => zone.is_active !== false && zone.zone_name)
+    .sort((a, b) => (a.zone_name || '').localeCompare(b.zone_name || ''))
+
+  if (managedZones.length) return managedZones
+
+  const restaurantSnapshot = await db.collection('restaurants').get().catch(() => ({ docs: [] }))
+  const fallbackZones = [...new Set(
+    restaurantSnapshot.docs
+      .map(doc => doc.data()?.zone)
+      .filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b))
+
+  return fallbackZones.map(zone => ({ id: zone, zone_name: zone, is_active: true, source: 'restaurants' }))
+}
+
+router.get('/worker-zones', async (req, res) => {
+  try {
+    const zones = await getAvailableZones()
+    res.json({ zones })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 // POST /api/auth/register (customer)
 router.post('/register', async (req, res) => {
@@ -97,7 +168,8 @@ router.post('/login', async (req, res) => {
         email: user.email, 
         phone: user.phone, 
         role: user.role, 
-        is_verified: user.is_verified 
+        is_verified: user.is_verified,
+        restaurant_id: user.restaurant_id || null
       }, 
       token 
     })
@@ -175,9 +247,11 @@ router.post('/verify-otp', async (req, res) => {
 // POST /api/auth/worker-register
 router.post('/worker-register', upload.fields([{ name: 'id_proof', maxCount: 1 }, { name: 'selfie', maxCount: 1 }]), async (req, res) => {
   try {
-    const { name, email, phone, password, vehicle_type, id_proof_type, platform_experience_years } = req.body
-    const id_proof_url = req.files?.id_proof?.[0]?.path || null
-    const selfie_url = req.files?.selfie?.[0]?.path || null
+    const { name, email, phone, password, vehicle_type, zone, id_proof_type, platform_experience_years } = req.body
+
+    if (!zone) {
+      return res.status(400).json({ error: 'Worker zone is required' })
+    }
 
     const userEmailDoc = await db.collection('users').doc(email).get()
     const phoneQuery = await db.collection('users').where('phone', '==', phone).get()
@@ -201,10 +275,14 @@ router.post('/worker-register', upload.fields([{ name: 'id_proof', maxCount: 1 }
     }
 
     await db.collection('users').doc(email).set(userData)
+
+    const id_proof_url = await uploadWorkerProofToCloudinary(req.files?.id_proof?.[0], `worker-proofs/${userId}/id-proof`)
+    const selfie_url = await uploadWorkerProofToCloudinary(req.files?.selfie?.[0], `worker-proofs/${userId}/selfie`)
     
     await db.collection('worker_profiles').doc(userId).set({
       user_id: userId,
       vehicle_type,
+      zone,
       id_proof_url,
       id_proof_type,
       selfie_url,
@@ -226,6 +304,89 @@ router.post('/worker-register', upload.fields([{ name: 'id_proof', maxCount: 1 }
 
     const token = signToken(userData)
     res.status(201).json({ user: userData, token, otp, message: 'Registration submitted. Admin will verify your documents.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.post('/restaurant-register', upload.fields([{ name: 'business_proof', maxCount: 1 }, { name: 'storefront_photo', maxCount: 1 }]), async (req, res) => {
+  try {
+    const { owner_name, restaurant_name, cuisine_type, address, zone, lat, lng, email, phone, password, business_proof_type } = req.body
+    if (!owner_name || !restaurant_name || !cuisine_type || !address || !zone || !lat || !lng || !email || !phone || !password) {
+      return res.status(400).json({ error: 'All fields are required' })
+    }
+    const parsedLat = Number(lat)
+    const parsedLng = Number(lng)
+    if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) {
+      return res.status(400).json({ error: 'Valid restaurant latitude and longitude are required' })
+    }
+
+    const userEmailDoc = await db.collection('users').doc(email).get()
+    const phoneQuery = await db.collection('users').where('phone', '==', phone).get()
+    if (userEmailDoc.exists || !phoneQuery.empty) {
+      return res.status(409).json({ error: 'Email or phone already registered' })
+    }
+
+    const restaurantId = db.collection('restaurants').doc().id
+    const hash = await bcrypt.hash(password, 10)
+
+    const userData = {
+      id: restaurantId,
+      name: owner_name,
+      email,
+      phone,
+      password_hash: hash,
+      role: 'restaurant',
+      restaurant_id: restaurantId,
+      is_verified: false,
+      created_at: new Date()
+    }
+
+    await db.collection('users').doc(email).set(userData)
+    const business_proof_url = await uploadWorkerProofToCloudinary(req.files?.business_proof?.[0], `restaurant-proofs/${restaurantId}/business-proof`)
+    const storefront_photo_url = await uploadWorkerProofToCloudinary(req.files?.storefront_photo?.[0], `restaurant-proofs/${restaurantId}/storefront`)
+    await db.collection('restaurants').doc(restaurantId).set({
+      name: restaurant_name,
+      cuisine_type,
+      address,
+      zone,
+      lat: parsedLat,
+      lng: parsedLng,
+      owner_name,
+      contact_email: email,
+      contact_phone: phone,
+      business_proof_type: business_proof_type || '',
+      business_proof_url,
+      storefront_photo_url,
+      verification_status: 'pending',
+      is_active: false,
+      created_at: new Date()
+    })
+
+    const otp = generateOtp()
+    await db.collection('otp_codes').add({
+      phone,
+      code: otp,
+      expires_at: new Date(Date.now() + 10 * 60 * 1000),
+      used: false,
+      created_at: new Date()
+    })
+
+    const token = signToken(userData)
+    res.status(201).json({
+      user: {
+        id: userData.id,
+        name: userData.name,
+        email: userData.email,
+        phone: userData.phone,
+        role: userData.role,
+        restaurant_id: restaurantId,
+        is_verified: false
+      },
+      token,
+      otp,
+      message: 'Restaurant registration submitted for admin approval.'
+    })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

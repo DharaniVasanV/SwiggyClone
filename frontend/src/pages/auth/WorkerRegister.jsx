@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { authAPI } from '../../services/api'
 import { useAuthStore } from '../../store/authStore'
@@ -10,13 +10,22 @@ const STEPS = ['Personal Info', 'Vehicle & Experience', 'Documents', 'OTP Verify
 export default function WorkerRegister() {
   const [step, setStep] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [zones, setZones] = useState([])
+  const [zonesLoading, setZonesLoading] = useState(true)
   const [form, setForm] = useState({
     name: '', email: '', phone: '', password: '',
-    vehicle_type: '', id_proof_type: '', platform_experience_years: 0,
+    vehicle_type: '', zone: '', id_proof_type: '', platform_experience_years: 0,
     id_proof: null, selfie: null, otp: ''
   })
   const { setAuth } = useAuthStore()
   const navigate = useNavigate()
+
+  useEffect(() => {
+    authAPI.getWorkerZones()
+      .then(res => setZones((res.data.zones || []).map(zone => zone.zone_name).filter(Boolean)))
+      .catch(() => setZones([]))
+      .finally(() => setZonesLoading(false))
+  }, [])
 
   const set = (field) => (e) => setForm({ ...form, [field]: e.target.value })
   const setFile = (field) => (e) => setForm({ ...form, [field]: e.target.files[0] })
@@ -108,9 +117,21 @@ export default function WorkerRegister() {
                 <option value={5}>5+ years</option>
               </select>
             </div>
+            <div>
+              <label className="block text-xs font-medium text-swiggy-dark mb-1">Delivery zone</label>
+              <select className="input-field" value={form.zone} onChange={set('zone')} disabled={zonesLoading || zones.length === 0}>
+                <option value="">{zonesLoading ? 'Loading zones...' : zones.length ? 'Select your zone' : 'No zones available'}</option>
+                {zones.map(zone => (
+                  <option key={zone} value={zone}>{zone}</option>
+                ))}
+              </select>
+              {!zonesLoading && zones.length === 0 && (
+                <p className="text-xs text-red-500 mt-1">Admin has not added any available zones yet.</p>
+              )}
+            </div>
             <div className="flex gap-2">
               <button onClick={() => setStep(0)} className="btn-outline-orange flex-1">Back</button>
-              <button onClick={() => { if (form.vehicle_type) setStep(2); else toast.error('Select vehicle') }} className="btn-orange flex-1">Continue</button>
+              <button onClick={() => { if (form.vehicle_type && form.zone) setStep(2); else toast.error('Select vehicle and zone') }} className="btn-orange flex-1" disabled={zonesLoading || zones.length === 0}>Continue</button>
             </div>
           </div>
         )}

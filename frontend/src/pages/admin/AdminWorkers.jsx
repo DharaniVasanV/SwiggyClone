@@ -26,6 +26,16 @@ export default function AdminWorkers() {
     } catch { toast.error('Failed to update worker') }
   }
 
+  const removeWorker = async (id) => {
+    try {
+      await adminAPI.deleteWorker(id)
+      setWorkers(prev => prev.filter(worker => worker.id !== id))
+      toast.success('Worker removed')
+    } catch {
+      toast.error('Failed to remove worker')
+    }
+  }
+
   const pendingCount = workers.filter(w => w.verification_status === 'pending').length
 
   const filtered = tab === 'applications'
@@ -109,7 +119,7 @@ export default function AdminWorkers() {
                   </div>
 
                   {w.id_proof_url && (
-                    <a href={`${import.meta.env.VITE_API_URL?.replace('/api', '') || ''}/${w.id_proof_url}`}
+                    <a href={w.id_proof_url}
                       target="_blank" rel="noreferrer"
                       className="flex items-center gap-1.5 text-xs text-swiggy-orange mb-4 hover:underline">
                       <FiFileText /> View ID Document
@@ -180,10 +190,19 @@ export default function AdminWorkers() {
                         </div>
                       )}
                       {w.verification_status === 'verified' && (
-                        <button onClick={() => verify(w.id, 'suspended')} className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded hover:bg-gray-300">Suspend</button>
+                        <div className="flex gap-1">
+                          <button onClick={() => verify(w.id, 'suspended')} className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded hover:bg-gray-300">Suspend</button>
+                          <button onClick={() => removeWorker(w.id)} className="text-xs bg-red-500 text-white px-2 py-1 rounded hover:opacity-90">Remove</button>
+                        </div>
                       )}
                       {w.verification_status === 'suspended' && (
-                        <button onClick={() => verify(w.id, 'verified')} className="text-xs bg-swiggy-green text-white px-2 py-1 rounded hover:opacity-90">Reinstate</button>
+                        <div className="flex gap-1">
+                          <button onClick={() => verify(w.id, 'verified')} className="text-xs bg-swiggy-green text-white px-2 py-1 rounded hover:opacity-90">Reinstate</button>
+                          <button onClick={() => removeWorker(w.id)} className="text-xs bg-red-500 text-white px-2 py-1 rounded hover:opacity-90">Remove</button>
+                        </div>
+                      )}
+                      {w.verification_status === 'rejected' && (
+                        <button onClick={() => removeWorker(w.id)} className="text-xs bg-red-500 text-white px-2 py-1 rounded hover:opacity-90">Remove</button>
                       )}
                     </td>
                   </tr>

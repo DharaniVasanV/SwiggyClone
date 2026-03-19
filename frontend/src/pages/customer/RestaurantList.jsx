@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { restaurantAPI } from '../../services/api'
 import RestaurantCard from '../../components/customer/RestaurantCard'
 import ShimmerCard from '../../components/common/ShimmerCard'
-import { FiSearch, FiFilter } from 'react-icons/fi'
+import { FiSearch } from 'react-icons/fi'
 
 const SORTS = ['rating','name','orders']
 const CUISINES = ['All','Pizza','Biryani','Burgers','South Indian','Chinese','Desserts']
@@ -20,7 +20,7 @@ export default function RestaurantList() {
     setLoading(true)
     restaurantAPI.getAll({ q: search||undefined, sort, cuisine: cuisine==='All'?undefined:cuisine })
       .then(r => setRestaurants(r.data.restaurants||[]))
-      .catch(() => setRestaurants(MOCK))
+      .catch(() => setRestaurants([]))
       .finally(() => setLoading(false))
   }, [search, sort, cuisine])
 
@@ -46,6 +46,8 @@ export default function RestaurantList() {
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {[...Array(8)].map((_,i) => <ShimmerCard key={i}/>)}
         </div>
+      ) : restaurants.length === 0 ? (
+        <div className="bg-white rounded-xl shadow-card p-10 text-center text-swiggy-gray-dark">No restaurants found.</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {restaurants.map(r => <RestaurantCard key={r.id} restaurant={r}/>)}
@@ -54,10 +56,3 @@ export default function RestaurantList() {
     </div>
   )
 }
-
-const MOCK = [
-  { id: '550e8400-e29b-41d4-a716-446655440000', name: "Domino's Pizza", cuisine_type: 'Pizza, Italian', rating: 4.5, delivery_time: '25-30', delivery_fee: 29, zone: 'Zone A', has_offer: '20% OFF' },
-  { id: '550e8400-e29b-41d4-a716-446655440001', name: 'Biryani Blues', cuisine_type: 'Biryani, North Indian', rating: 4.3, delivery_time: '30-40', delivery_fee: 0, zone: 'Zone B', has_offer: 'Free Delivery' },
-  { id: '550e8400-e29b-41d4-a716-446655440002', name: 'McDonald\'s', cuisine_type: 'Burgers, Fast Food', rating: 4.1, delivery_time: '20-25', delivery_fee: 29, zone: 'Zone A' },
-  { id: '550e8400-e29b-41d4-a716-446655440003', name: 'Saravana Bhavan', cuisine_type: 'South Indian', rating: 4.6, delivery_time: '35-45', delivery_fee: 49, zone: 'Zone C', has_offer: '30% OFF' },
-]

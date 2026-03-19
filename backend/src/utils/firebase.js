@@ -9,24 +9,29 @@ if (!admin.apps.length) {
     const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || './service-account.json';
     const fs = require('fs');
     const path = require('path');
+    const projectId = process.env.FIREBASE_PROJECT_ID || 'swiggy-clone-99cf3';
+    const storageBucket = process.env.FIREBASE_STORAGE_BUCKET || `${projectId}.appspot.com`;
     
     const fullPath = path.resolve(process.cwd(), serviceAccountPath);
     
     if (fs.existsSync(fullPath)) {
       const serviceAccount = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
       admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
+        credential: admin.credential.cert(serviceAccount),
+        storageBucket
       });
       console.log('Firebase initialized with service account file');
     } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
       const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
       admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
+        credential: admin.credential.cert(serviceAccount),
+        storageBucket
       });
       console.log('Firebase initialized with service account env string');
     } else {
       admin.initializeApp({
-        projectId: process.env.FIREBASE_PROJECT_ID || 'swiggy-clone-99cf3'
+        projectId,
+        storageBucket
       });
       console.log('Firebase initialized with Project ID');
     }
@@ -37,5 +42,6 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 const auth = admin.auth();
+const bucket = admin.storage().bucket();
 
-module.exports = { db, auth, admin };
+module.exports = { db, auth, admin, bucket };

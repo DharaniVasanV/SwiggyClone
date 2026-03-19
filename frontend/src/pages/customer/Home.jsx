@@ -37,7 +37,10 @@ export default function Home() {
         const res = await restaurantAPI.getAll()
         setRestaurants(res.data.restaurants || [])
         setTopRated((res.data.restaurants || []).filter((r) => r.rating >= 4.3))
-      } catch { /* use mock data */ }
+      } catch {
+        setRestaurants([])
+        setTopRated([])
+      }
       finally { setLoading(false) }
     }
     fetchData()
@@ -135,7 +138,7 @@ export default function Home() {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {(topRated.length ? topRated : MOCK_RESTAURANTS).slice(0, 8).map((r) => (
+              {topRated.slice(0, 8).map((r) => (
                 <RestaurantCard key={r.id} restaurant={r} />
               ))}
             </div>
@@ -148,32 +151,25 @@ export default function Home() {
         <section>
           <div className="flex items-center justify-between mb-4">
             <h2 className="section-title mb-0">All restaurants</h2>
-            <span className="text-sm text-swiggy-gray-dark">{restaurants.length || MOCK_RESTAURANTS.length} places</span>
+            <span className="text-sm text-swiggy-gray-dark">{restaurants.length} places</span>
           </div>
           {loading ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {[...Array(8)].map((_, i) => <ShimmerCard key={i} />)}
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {(restaurants.length ? restaurants : MOCK_RESTAURANTS).map((r) => (
-                <RestaurantCard key={r.id} restaurant={r} />
-              ))}
-            </div>
+            restaurants.length === 0 ? (
+              <div className="bg-white rounded-xl shadow-card p-10 text-center text-swiggy-gray-dark">No restaurants available right now.</div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {restaurants.map((r) => (
+                  <RestaurantCard key={r.id} restaurant={r} />
+                ))}
+              </div>
+            )
           )}
         </section>
       </div>
     </div>
   )
 }
-
-const MOCK_RESTAURANTS = [
-  { id: '550e8400-e29b-41d4-a716-446655440000', name: "Domino's Pizza", cuisine_type: 'Pizza, Italian', rating: 4.5, delivery_time: '25-30', delivery_fee: 29, image_url: null, zone: 'Zone A', has_offer: '20% OFF' },
-  { id: '550e8400-e29b-41d4-a716-446655440001', name: 'Biryani Blues', cuisine_type: 'Biryani, North Indian', rating: 4.3, delivery_time: '30-40', delivery_fee: 0, image_url: null, zone: 'Zone B', has_offer: 'Free Delivery' },
-  { id: '550e8400-e29b-41d4-a716-446655440002', name: 'McDonald\'s', cuisine_type: 'Burgers, Fast Food', rating: 4.1, delivery_time: '20-25', delivery_fee: 29, image_url: null, zone: 'Zone A', has_offer: null },
-  { id: '550e8400-e29b-41d4-a716-446655440003', name: 'Saravana Bhavan', cuisine_type: 'South Indian', rating: 4.6, delivery_time: '35-45', delivery_fee: 49, image_url: null, zone: 'Zone C', has_offer: '30% OFF' },
-  { id: '550e8400-e29b-41d4-a716-446655440004', name: 'Wow! Momo', cuisine_type: 'Chinese, Momos', rating: 4.2, delivery_time: '25-35', delivery_fee: 29, image_url: null, zone: 'Zone B', has_offer: null },
-  { id: '550e8400-e29b-41d4-a716-446655440005', name: 'Burger King', cuisine_type: 'Burgers, American', rating: 4.0, delivery_time: '20-30', delivery_fee: 29, image_url: null, zone: 'Zone A', has_offer: 'BUY1GET1' },
-  { id: '550e8400-e29b-41d4-a716-446655440006', name: 'KFC', cuisine_type: 'Chicken, Fast Food', rating: 4.3, delivery_time: '30-40', delivery_fee: 49, image_url: null, zone: 'Zone C', has_offer: null },
-  { id: '550e8400-e29b-41d4-a716-446655440007', name: 'Subway', cuisine_type: 'Sandwiches, Healthy', rating: 4.1, delivery_time: '20-30', delivery_fee: 0, image_url: null, zone: 'Zone B', has_offer: 'Free Delivery' },
-]

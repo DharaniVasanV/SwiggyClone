@@ -1,9 +1,13 @@
 const express = require('express')
 const router = express.Router()
+const crypto = require('crypto')
 const { db, admin } = require('../utils/firebase')
 const { authenticate, requireRole } = require('../middleware/auth')
 
 router.use(authenticate, requireRole('admin'))
+
+const normalizeZone = (value) => (value || '').trim().toLowerCase()
+const buildKeyPreview = (key) => `${key.slice(0, 8)}...${key.slice(-4)}`
 
 // GET /api/admin/dashboard
 router.get('/dashboard', async (req, res) => {
@@ -65,6 +69,191 @@ router.get('/dashboard', async (req, res) => {
       top_workers,
       recent_failures
     })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/zones', async (req, res) => {
+  try {
+    const snapshot = await db.collection('delivery_zones').orderBy('zone_name', 'asc').get().catch(() => ({ docs: [] }))
+    const zones = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      created_at: doc.data().created_at?.toDate ? doc.data().created_at.toDate() : null
+    }))
+    res.json({ zones })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/external-access/key', async (req, res) => {
+  try {
+    const doc = await db.collection('app_settings').doc('external_api_access').get()
+    const data = doc.exists ? doc.data() : null
+
+    res.json({
+      key: data ? {
+        created_at: data.created_at?.toDate ? data.created_at.toDate() : null,
+        created_by: data.created_by || null,
+        last_regenerated_at: data.last_regenerated_at?.toDate ? data.last_regenerated_at.toDate() : null,
+        preview: data.preview || null
+      } : null,
+      endpoints: [
+        'GET /api/external/worker-profiles',
+        'GET /api/external/worker-earnings',
+        'GET /api/external/orders',
+        'GET /api/external/workers'
+      ]
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.post('/external-access/key/generate', async (req, res) => {
+  try {
+    const rawKey = `swg_ext_${crypto.randomBytes(24).toString('hex')}`
+    const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex')
+    const now = admin.firestore.FieldValue.serverTimestamp()
+
+    await db.collection('app_settings').doc('external_api_access').set({
+      key_hash: keyHash,
+      preview: buildKeyPreview(rawKey),
+      created_by: req.user.id,
+      created_at: now,
+      last_regenerated_at: now
+    }, { merge: true })
+
+    res.status(201).json({
+      api_key: rawKey,
+      preview: buildKeyPreview(rawKey),
+      message: 'New external API key generated. Copy it now because only the preview is stored.'
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/restaurants', async (req, res) => {
+  try {
+    const snapshot = await db.collection('restaurants').get().catch(() => ({ docs: [] }))
+    const restaurants = await Promise.all(snapshot.docs.map(async doc => {
+      const data = doc.data()
+      const userQuery = await db.collection('users').where('restaurant_id', '==', doc.id).limit(1).get().catch(() => ({ empty: true, docs: [] }))
+      const owner = userQuery.empty ? {} : userQuery.docs[0].data()
+      return {
+        id: doc.id,
+        ...data,
+        owner_name: data.owner_name || owner.name || '',
+        contact_email: data.contact_email || owner.email || '',
+        contact_phone: data.contact_phone || owner.phone || '',
+        created_at: data.created_at?.toDate ? data.created_at.toDate() : null
+      }
+    }))
+
+    restaurants.sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
+    res.json(restaurants)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.post('/zones', async (req, res) => {
+  try {
+    const zoneName = (req.body.zone_name || '').trim()
+    const dailyTargetOrders = Math.max(0, parseInt(req.body.daily_target_orders, 10) || 0)
+    if (!zoneName) return res.status(400).json({ error: 'Zone name is required' })
+
+    const existingSnapshot = await db.collection('delivery_zones').get().catch(() => ({ docs: [] }))
+    const duplicate = existingSnapshot.docs.find(doc => normalizeZone(doc.data().zone_name) === normalizeZone(zoneName))
+    if (duplicate) return res.status(409).json({ error: 'Zone already exists' })
+
+    const zoneRef = db.collection('delivery_zones').doc()
+    const zoneData = {
+      zone_name: zoneName,
+      daily_target_orders: dailyTargetOrders,
+      is_active: true,
+      created_at: admin.firestore.FieldValue.serverTimestamp(),
+      created_by: req.user.id
+    }
+
+    await zoneRef.set(zoneData)
+    res.status(201).json({ zone: { id: zoneRef.id, ...zoneData, created_at: new Date() } })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.patch('/zones/:id', async (req, res) => {
+  try {
+    const updateData = {
+      updated_at: admin.firestore.FieldValue.serverTimestamp()
+    }
+
+    if (req.body.zone_name !== undefined) {
+      const zoneName = String(req.body.zone_name || '').trim()
+      if (!zoneName) return res.status(400).json({ error: 'Zone name is required' })
+      updateData.zone_name = zoneName
+    }
+
+    if (req.body.daily_target_orders !== undefined) {
+      const dailyTargetOrders = Math.max(0, parseInt(req.body.daily_target_orders, 10) || 0)
+      updateData.daily_target_orders = dailyTargetOrders
+    }
+
+    await db.collection('delivery_zones').doc(req.params.id).update(updateData)
+    res.json({ message: 'Zone updated' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.delete('/zones/:id', async (req, res) => {
+  try {
+    await db.collection('delivery_zones').doc(req.params.id).delete()
+    res.json({ message: 'Zone removed' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.patch('/restaurants/:id/verify', async (req, res) => {
+  try {
+    const { status } = req.body
+    if (!['verified', 'rejected', 'suspended'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' })
+    }
+
+    await db.collection('restaurants').doc(req.params.id).update({
+      verification_status: status,
+      is_active: status === 'verified',
+      verified_at: admin.firestore.FieldValue.serverTimestamp(),
+      verified_by: req.user.id
+    })
+
+    const userQuery = await db.collection('users').where('restaurant_id', '==', req.params.id).limit(1).get().catch(() => ({ empty: true, docs: [] }))
+    if (!userQuery.empty) {
+      await userQuery.docs[0].ref.update({
+        is_verified: status === 'verified'
+      })
+    }
+
+    res.json({ message: `Restaurant ${status}` })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.delete('/restaurants/:id', async (req, res) => {
+  try {
+    const userQuery = await db.collection('users').where('restaurant_id', '==', req.params.id).limit(1).get().catch(() => ({ empty: true, docs: [] }))
+    if (!userQuery.empty) {
+      await userQuery.docs[0].ref.delete()
+    }
+    await db.collection('restaurants').doc(req.params.id).delete()
+    res.json({ message: 'Restaurant removed' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -165,6 +354,19 @@ router.patch('/workers/:id/verify', async (req, res) => {
         }
     }
     res.json({ message: `Worker ${status}` })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.delete('/workers/:id', async (req, res) => {
+  try {
+    const userQuery = await db.collection('users').where('id', '==', req.params.id).limit(1).get().catch(() => ({ empty: true, docs: [] }))
+    if (!userQuery.empty) {
+      await userQuery.docs[0].ref.delete()
+    }
+    await db.collection('worker_profiles').doc(req.params.id).delete().catch(() => {})
+    res.json({ message: 'Worker removed' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -338,14 +540,44 @@ router.get('/failures', async (req, res) => {
 // POST /api/admin/restaurants
 router.post('/restaurants', async (req, res) => {
   try {
-    const { name, cuisine_type, address, lat, lng, zone } = req.body
+    const { name, cuisine_type, address, lat, lng, zone, manager_name, manager_email, manager_phone, manager_password } = req.body
+    const parsedLat = Number(lat)
+    const parsedLng = Number(lng)
+
+    if (!name || !cuisine_type || !address || !zone || !Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) {
+      return res.status(400).json({ error: 'Restaurant name, cuisine, address, zone, latitude, and longitude are required' })
+    }
+
+    if (manager_email && manager_password && manager_name) {
+      const existingUser = await db.collection('users').doc(manager_email).get()
+      if (existingUser.exists) {
+        return res.status(409).json({ error: 'Manager email already exists' })
+      }
+    }
+
     const orderId = db.collection('restaurants').doc().id
     const data = {
-        name, cuisine_type, address, lat, lng, zone,
+        name, cuisine_type, address, lat: parsedLat, lng: parsedLng, zone,
         is_active: true,
         created_at: admin.firestore.FieldValue.serverTimestamp()
     }
     await db.collection('restaurants').doc(orderId).set(data)
+
+    if (manager_email && manager_password && manager_name) {
+      const hash = await require('bcryptjs').hash(manager_password, 10)
+      await db.collection('users').doc(manager_email).set({
+        id: orderId,
+        name: manager_name,
+        email: manager_email,
+        phone: manager_phone || '',
+        password_hash: hash,
+        role: 'restaurant',
+        restaurant_id: orderId,
+        is_verified: true,
+        created_at: admin.firestore.FieldValue.serverTimestamp()
+      })
+    }
+
     res.status(201).json({ id: orderId, ...data })
   } catch (err) {
     res.status(500).json({ error: err.message })

@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
-import { FiGrid, FiUsers, FiPackage, FiMap, FiTrendingUp, FiCoffee, FiLogOut } from 'react-icons/fi'
+import { FiGrid, FiUsers, FiPackage, FiMap, FiTrendingUp, FiCoffee, FiLogOut, FiKey } from 'react-icons/fi'
 import { useAuthStore } from '../../store/authStore'
 
 const NAV = [
@@ -9,6 +9,7 @@ const NAV = [
   { to: '/admin/orders', icon: <FiPackage />, label: 'Orders' },
   { to: '/admin/analytics', icon: <FiTrendingUp />, label: 'Analytics' },
   { to: '/admin/restaurants', icon: <FiCoffee />, label: 'Restaurants' },
+  { to: '/admin/api-access', icon: <FiKey />, label: 'API Access' },
 ]
 
 export default function AdminLayout() {

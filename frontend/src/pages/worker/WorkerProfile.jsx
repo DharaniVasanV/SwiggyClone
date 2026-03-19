@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
-import { useAuthStore } from '../../store/authStore'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { FiAward, FiLogOut, FiStar, FiTruck } from 'react-icons/fi'
+import { useAuthStore } from '../../store/authStore'
 import { workerAPI } from '../../services/api'
-import { FiStar, FiTruck, FiAward, FiLogOut } from 'react-icons/fi'
 
 export default function WorkerProfile() {
   const { user, logout } = useAuthStore()
@@ -10,13 +10,16 @@ export default function WorkerProfile() {
   const [stats, setStats] = useState(null)
 
   useEffect(() => {
-    workerAPI.getMyStats().then(r => setStats(r.data)).catch(() => {})
+    workerAPI.getMyStats().then((r) => setStats(r.data)).catch(() => {})
   }, [])
 
-  const totalDeliveries = stats?.total_deliveries ?? '—'
-  const completionRate = stats?.total_deliveries
-    ? `${((stats.total_deliveries / (stats.total_deliveries + 1)) * 100).toFixed(0)}%`
-    : '—'
+  const totalDeliveries = stats?.total_deliveries ?? '-'
+  const completionRate = stats?.daily_target_orders
+    ? `${stats.daily_completion_rate ?? 0}%`
+    : 'No target'
+  const completionLabel = stats?.daily_target_orders
+    ? `${stats.today_orders || 0}/${stats.daily_target_orders} today`
+    : 'Ask admin to set zone target'
 
   return (
     <div className="p-4">
@@ -35,14 +38,15 @@ export default function WorkerProfile() {
 
       <div className="grid grid-cols-3 gap-3 mb-4">
         {[
-          { icon: <FiTruck/>, label: 'Total Orders', value: totalDeliveries },
-          { icon: <FiAward/>, label: 'Completion', value: completionRate },
-          { icon: <FiStar/>, label: 'Earnings Today', value: stats ? `₹${stats.today_earnings}` : '—' },
-        ].map(s => (
-          <div key={s.label} className="bg-white rounded-xl shadow-card p-3 text-center">
-            <div className="text-swiggy-orange text-lg mb-1">{s.icon}</div>
-            <div className="font-bold text-swiggy-dark text-base">{s.value}</div>
-            <div className="text-xs text-swiggy-gray-dark">{s.label}</div>
+          { icon: <FiTruck />, label: 'Total Orders', value: totalDeliveries, sub: 'All time' },
+          { icon: <FiAward />, label: 'Completion', value: completionRate, sub: completionLabel },
+          { icon: <FiStar />, label: 'Earnings Today', value: stats ? `Rs ${stats.today_earnings}` : '-', sub: stats?.worker_zone || 'Today' }
+        ].map((card) => (
+          <div key={card.label} className="bg-white rounded-xl shadow-card p-3 text-center">
+            <div className="text-swiggy-orange text-lg mb-1">{card.icon}</div>
+            <div className="font-bold text-swiggy-dark text-base">{card.value}</div>
+            <div className="text-xs text-swiggy-gray-dark">{card.label}</div>
+            <div className="text-[11px] text-swiggy-gray-dark mt-1">{card.sub}</div>
           </div>
         ))}
       </div>
@@ -51,8 +55,8 @@ export default function WorkerProfile() {
         {[
           { label: 'Name', value: user?.name },
           { label: 'Phone', value: user?.phone },
-          { label: 'Email', value: user?.email },
-        ].map(item => (
+          { label: 'Email', value: user?.email }
+        ].map((item) => (
           <div key={item.label} className="flex items-center justify-between px-4 py-3 border-b border-gray-100 last:border-b-0">
             <span className="text-sm text-swiggy-gray-dark">{item.label}</span>
             <span className="text-sm font-medium text-swiggy-dark">{item.value}</span>
@@ -60,9 +64,11 @@ export default function WorkerProfile() {
         ))}
       </div>
 
-      <button onClick={() => { logout(); navigate('/login') }}
-        className="flex items-center justify-center gap-2 w-full border border-red-300 text-red-500 py-3 rounded-xl font-medium hover:bg-red-50 transition-colors">
-        <FiLogOut/> Sign out
+      <button
+        onClick={() => { logout(); navigate('/login') }}
+        className="flex items-center justify-center gap-2 w-full border border-red-300 text-red-500 py-3 rounded-xl font-medium hover:bg-red-50 transition-colors"
+      >
+        <FiLogOut /> Sign out
       </button>
     </div>
   )

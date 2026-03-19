@@ -19,6 +19,7 @@ export default function Login() {
       toast.success(`Welcome back, ${res.data.user.name}!`)
       if (res.data.user.role === 'admin') navigate('/admin')
       else if (res.data.user.role === 'worker') navigate('/worker')
+      else if (res.data.user.role === 'restaurant') navigate('/restaurant')
       else navigate('/')
     } catch (err) {
       toast.error(err.response?.data?.error || 'Login failed')
@@ -66,6 +67,10 @@ export default function Login() {
             Delivery partner?{' '}
             <Link to="/worker/register" className="text-swiggy-orange font-medium hover:underline">Register here</Link>
           </div>
+          <div className="mt-3 text-center text-sm text-swiggy-gray-dark">
+            Restaurant owner?{' '}
+            <Link to="/restaurant/register" className="text-swiggy-orange font-medium hover:underline">Register here</Link>
+          </div>
 
           {/* Demo accounts */}
           <div className="mt-6 p-4 bg-swiggy-gray rounded-lg">
@@ -74,6 +79,7 @@ export default function Login() {
               <p>Admin: admin@test.com / admin123</p>
               <p>Worker: ravi@test.com / password123</p>
               <p>Customer: customer@test.com / password123</p>
+              <p>Restaurant: created from Admin -> Restaurants</p>
             </div>
           </div>
         </div>

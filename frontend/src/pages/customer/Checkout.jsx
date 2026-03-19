@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useCartStore } from '../../store/cartStore'
-import { orderAPI } from '../../services/api'
+import { orderAPI, restaurantAPI } from '../../services/api'
 import { FiMapPin } from 'react-icons/fi'
 import toast from 'react-hot-toast'
 
@@ -9,9 +9,15 @@ export default function Checkout() {
   const { items, restaurantId, getTotal, clearCart } = useCartStore()
   const [address, setAddress] = useState('')
   const [loading, setLoading] = useState(false)
+  const [restaurant, setRestaurant] = useState(null)
   const navigate = useNavigate()
   const total = getTotal()
-  const deliveryFee = total > 299 ? 0 : 29
+  const deliveryFee = total > 299 ? 0 : (Number.isFinite(Number(restaurant?.delivery_fee)) ? Number(restaurant.delivery_fee) : 29)
+
+  useEffect(() => {
+    if (!restaurantId) return
+    restaurantAPI.getById(restaurantId).then((res) => setRestaurant(res.data)).catch(() => setRestaurant(null))
+  }, [restaurantId])
 
   const placeOrder = async () => {
     if (!address) { toast.error('Enter delivery address'); return }
@@ -21,8 +27,7 @@ export default function Checkout() {
         restaurant_id: restaurantId,
         items: items.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity })),
         delivery_address: address,
-        delivery_lat: 13.0827, delivery_lng: 80.2707,
-        delivery_zone: 'Zone A',
+        delivery_zone: null,
         subtotal: total, delivery_fee: deliveryFee, total_amount: total + deliveryFee
       })
       clearCart()

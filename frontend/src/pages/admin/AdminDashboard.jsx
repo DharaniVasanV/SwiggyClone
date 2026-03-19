@@ -16,6 +16,11 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [liveWorkers, setLiveWorkers] = useState([])
+  const [zones, setZones] = useState([])
+  const [zoneInput, setZoneInput] = useState('')
+  const [zoneTargetInput, setZoneTargetInput] = useState('')
+  const [zoneTargets, setZoneTargets] = useState({})
+  const [savingZone, setSavingZone] = useState(false)
 
   useEffect(() => {
     adminAPI.getDashboard()
@@ -24,6 +29,11 @@ export default function AdminDashboard() {
       .finally(() => setLoading(false))
 
     adminAPI.getLiveWorkers().then(r => setLiveWorkers(r.data.workers || [])).catch(() => {})
+    adminAPI.getZones().then(r => {
+      const nextZones = r.data.zones || []
+      setZones(nextZones)
+      setZoneTargets(Object.fromEntries(nextZones.map(zone => [zone.id, String(zone.daily_target_orders ?? 0)])))
+    }).catch(() => setZones([]))
 
     connectSocket()
     const unsub = subscribeToLiveWorkers(update => {
@@ -35,6 +45,44 @@ export default function AdminDashboard() {
     })
     return () => unsub?.()
   }, [])
+
+  const addZone = async () => {
+    const nextZone = zoneInput.trim()
+    if (!nextZone) return
+
+    setSavingZone(true)
+    try {
+      const res = await adminAPI.addZone(nextZone, zoneTargetInput.trim() ? Number(zoneTargetInput) : 0)
+      const createdZone = res.data.zone
+      setZones(prev => [...prev, createdZone].sort((a, b) => (a.zone_name || '').localeCompare(b.zone_name || '')))
+      setZoneTargets(prev => ({ ...prev, [createdZone.id]: String(createdZone.daily_target_orders ?? 0) }))
+      setZoneInput('')
+      setZoneTargetInput('')
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to add zone')
+    } finally {
+      setSavingZone(false)
+    }
+  }
+
+  const saveZoneTarget = async (zone) => {
+    try {
+      const targetValue = Math.max(0, Number(zoneTargets[zone.id] || 0))
+      await adminAPI.updateZone(zone.id, { daily_target_orders: targetValue })
+      setZones(prev => prev.map(item => item.id === zone.id ? { ...item, daily_target_orders: targetValue } : item))
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to update zone target')
+    }
+  }
+
+  const removeZone = async (id) => {
+    try {
+      await adminAPI.deleteZone(id)
+      setZones(prev => prev.filter(zone => zone.id !== id))
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to remove zone')
+    }
+  }
 
   const workerIcon = (status) => L.divIcon({
     className: 'custom-div-icon',
@@ -117,6 +165,62 @@ export default function AdminDashboard() {
             )}
           </div>
         </div>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-card p-5 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="font-bold text-swiggy-dark">Available Zones</h2>
+            <p className="text-xs text-swiggy-gray-dark mt-1">Workers can only pick a zone from this admin-managed list.</p>
+          </div>
+          <span className="text-xs bg-swiggy-orange/10 text-swiggy-orange px-2 py-1 rounded-full font-medium">{zones.length} zones</span>
+        </div>
+        <div className="flex gap-2 mb-4">
+          <input
+            className="input-field flex-1"
+            placeholder="Add zone name"
+            value={zoneInput}
+            onChange={(e) => setZoneInput(e.target.value)}
+          />
+          <input
+            className="input-field w-40"
+            type="number"
+            min="0"
+            placeholder="Daily target"
+            value={zoneTargetInput}
+            onChange={(e) => setZoneTargetInput(e.target.value)}
+          />
+          <button onClick={addZone} disabled={savingZone || !zoneInput.trim()} className="btn-orange px-4 disabled:opacity-60">
+            {savingZone ? 'Saving...' : 'Add Zone'}
+          </button>
+        </div>
+        {zones.length === 0 ? (
+          <p className="text-sm text-swiggy-gray-dark">No zones configured yet.</p>
+        ) : (
+          <div className="grid md:grid-cols-2 gap-3">
+            {zones.map(zone => (
+              <div key={zone.id} className="bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <span className="text-sm font-semibold text-swiggy-dark">{zone.zone_name}</span>
+                  <button onClick={() => removeZone(zone.id)} className="text-xs text-red-500 hover:text-red-600">Remove</button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    className="input-field"
+                    type="number"
+                    min="0"
+                    value={zoneTargets[zone.id] ?? ''}
+                    onChange={(e) => setZoneTargets(prev => ({ ...prev, [zone.id]: e.target.value }))}
+                  />
+                  <button onClick={() => saveZoneTarget(zone)} className="btn-orange px-4 text-sm">
+                    Save Target
+                  </button>
+                </div>
+                <p className="text-xs text-swiggy-gray-dark mt-2">Daily incentive target for this zone.</p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Live tracking preview */}

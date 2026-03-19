@@ -14,6 +14,7 @@ const deliveryRoutes = require('./routes/deliveries');
 const adminRoutes = require('./routes/admin');
 const trackingRoutes = require('./routes/tracking');
 const restaurantRoutes = require('./routes/restaurants');
+const externalRoutes = require('./routes/external');
 
 const app = express();
 const server = http.createServer(app);
@@ -36,7 +37,6 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 200 }));
-app.use('/uploads', express.static('uploads'));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
 
@@ -48,6 +48,7 @@ app.use('/api/deliveries', deliveryRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/tracking', trackingRoutes);
 app.use('/api/restaurants', restaurantRoutes);
+app.use('/api/external', externalRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
