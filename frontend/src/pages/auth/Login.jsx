@@ -72,14 +72,13 @@ export default function Login() {
             <Link to="/restaurant/register" className="text-swiggy-orange font-medium hover:underline">Register here</Link>
           </div>
 
-          {/* Demo accounts */}
           <div className="mt-6 p-4 bg-swiggy-gray rounded-lg">
-            <p className="text-xs font-medium text-swiggy-dark mb-2">Demo accounts</p>
+            <p className="text-xs font-medium text-swiggy-dark mb-2">Demo access</p>
             <div className="space-y-1 text-xs text-swiggy-gray-dark">
-              <p>Admin: admin@test.com / admin123</p>
-              <p>Worker: ravi@test.com / password123</p>
-              <p>Customer: customer@test.com / password123</p>
-              <p>Restaurant: created from Admin -> Restaurants</p>
+              <p>Admin: `admin@test.com / admin123`</p>
+              <p>Worker: `ravi@test.com / password123`</p>
+              <p>Customer: `customer@test.com / password123`</p>
+              <p>Restaurant: register from the restaurant link, then wait for admin approval</p>
             </div>
           </div>
         </div>
