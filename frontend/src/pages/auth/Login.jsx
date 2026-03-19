@@ -78,7 +78,7 @@ export default function Login() {
               <p>Admin: `admin@test.com / admin123`</p>
               <p>Worker: `ravi@test.com / password123`</p>
               <p>Customer: `customer@test.com / password123`</p>
-              <p>Restaurant: register from the restaurant link, then wait for admin approval</p>
+              <p>Restaurant: `mathewgeorge64@gmail.com / password123`</p>
             </div>
           </div>
         </div>
