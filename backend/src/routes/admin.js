@@ -90,16 +90,22 @@ router.get('/zones', async (req, res) => {
 
 router.get('/external-access/key', async (req, res) => {
   try {
-    const doc = await db.collection('app_settings').doc('external_api_access').get()
-    const data = doc.exists ? doc.data() : null
+    const snapshot = await db.collection('external_api_keys').orderBy('created_at', 'desc').get().catch(() => ({ docs: [] }))
+    const keys = snapshot.docs.map((doc) => {
+      const data = doc.data()
+      return {
+        id: doc.id,
+        preview: data.preview || null,
+        label: data.label || '',
+        is_active: data.is_active !== false,
+        created_by: data.created_by || null,
+        created_at: data.created_at?.toDate ? data.created_at.toDate() : null,
+        last_regenerated_at: data.last_regenerated_at?.toDate ? data.last_regenerated_at.toDate() : null
+      }
+    })
 
     res.json({
-      key: data ? {
-        created_at: data.created_at?.toDate ? data.created_at.toDate() : null,
-        created_by: data.created_by || null,
-        last_regenerated_at: data.last_regenerated_at?.toDate ? data.last_regenerated_at.toDate() : null,
-        preview: data.preview || null
-      } : null,
+      keys,
       endpoints: [
         'GET /api/external/worker-profiles',
         'GET /api/external/worker-earnings',
@@ -117,20 +123,45 @@ router.post('/external-access/key/generate', async (req, res) => {
     const rawKey = `swg_ext_${crypto.randomBytes(24).toString('hex')}`
     const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex')
     const now = admin.firestore.FieldValue.serverTimestamp()
+    const keyRef = db.collection('external_api_keys').doc()
 
-    await db.collection('app_settings').doc('external_api_access').set({
+    await keyRef.set({
       key_hash: keyHash,
       preview: buildKeyPreview(rawKey),
+      label: String(req.body?.label || '').trim(),
+      is_active: true,
       created_by: req.user.id,
       created_at: now,
       last_regenerated_at: now
-    }, { merge: true })
+    })
 
     res.status(201).json({
+      id: keyRef.id,
       api_key: rawKey,
       preview: buildKeyPreview(rawKey),
       message: 'New external API key generated. Copy it now because only the preview is stored.'
     })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.patch('/external-access/key/:id', async (req, res) => {
+  try {
+    const updateData = {
+      updated_at: admin.firestore.FieldValue.serverTimestamp()
+    }
+
+    if (req.body.label !== undefined) {
+      updateData.label = String(req.body.label || '').trim()
+    }
+
+    if (req.body.is_active !== undefined) {
+      updateData.is_active = Boolean(req.body.is_active)
+    }
+
+    await db.collection('external_api_keys').doc(req.params.id).update(updateData)
+    res.json({ message: 'API key updated' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

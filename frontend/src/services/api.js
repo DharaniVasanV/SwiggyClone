@@ -86,7 +86,8 @@ export const workerAPI = {
 export const adminAPI = {
   getDashboard: () => api.get('/admin/dashboard'),
   getExternalAccessKey: () => api.get('/admin/external-access/key'),
-  generateExternalAccessKey: () => api.post('/admin/external-access/key/generate'),
+  generateExternalAccessKey: (data) => api.post('/admin/external-access/key/generate', data),
+  updateExternalAccessKey: (id, data) => api.patch(`/admin/external-access/key/${id}`, data),
   getZones: () => api.get('/admin/zones'),
   addZone: (zone_name, daily_target_orders = 0) => api.post('/admin/zones', { zone_name, daily_target_orders }),
   updateZone: (id, data) => api.patch(`/admin/zones/${id}`, data),

@@ -37,15 +37,19 @@ const requireExternalApiKey = async (req, res, next) => {
       return res.status(401).json({ error: 'API key required' });
     }
 
-    const keyDoc = await db.collection('app_settings').doc('external_api_access').get().catch(() => null);
-    const config = keyDoc?.exists ? keyDoc.data() : null;
-    const expectedHash = config?.key_hash || (process.env.INSURANCE_API_KEY ? hashApiKey(process.env.INSURANCE_API_KEY) : null);
+    const hashedKey = hashApiKey(key);
+    const snapshot = await db.collection('external_api_keys').get().catch(() => ({ docs: [] }));
+    const matchingDoc = snapshot.docs.find((doc) => {
+      const data = doc.data();
+      return data.key_hash === hashedKey && data.is_active !== false;
+    });
+    const envFallbackValid = process.env.INSURANCE_API_KEY && hashedKey === hashApiKey(process.env.INSURANCE_API_KEY);
 
-    if (!expectedHash || hashApiKey(key) !== expectedHash) {
+    if (!matchingDoc && !envFallbackValid) {
       return res.status(401).json({ error: 'Invalid API key' });
     }
 
-    req.externalApiAccess = config || null;
+    req.externalApiAccess = matchingDoc ? { id: matchingDoc.id, ...matchingDoc.data() } : { source: 'env_fallback' };
     next();
   } catch (error) {
     return res.status(500).json({ error: error.message });
