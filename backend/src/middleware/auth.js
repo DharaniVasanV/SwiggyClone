@@ -25,6 +25,47 @@ const requireRole = (...roles) => (req, res, next) => {
 
 const hashApiKey = (key) => crypto.createHash('sha256').update(String(key || '')).digest('hex');
 
+const getApiKeyEncryptionSecret = () => {
+  const secret = process.env.EXTERNAL_API_KEY_ENCRYPTION_SECRET || process.env.JWT_SECRET || '';
+  if (!secret) {
+    throw new Error('API key encryption secret is not configured');
+  }
+  return crypto.createHash('sha256').update(secret).digest();
+};
+
+const encryptApiKey = (rawKey) => {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', getApiKeyEncryptionSecret(), iv);
+  const encrypted = Buffer.concat([cipher.update(String(rawKey), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+
+  return {
+    encrypted_key: encrypted.toString('base64'),
+    encryption_iv: iv.toString('base64'),
+    encryption_tag: tag.toString('base64')
+  };
+};
+
+const decryptApiKey = (payload) => {
+  if (!payload?.encrypted_key || !payload?.encryption_iv || !payload?.encryption_tag) {
+    throw new Error('Encrypted API key is not available');
+  }
+
+  const decipher = crypto.createDecipheriv(
+    'aes-256-gcm',
+    getApiKeyEncryptionSecret(),
+    Buffer.from(payload.encryption_iv, 'base64')
+  );
+  decipher.setAuthTag(Buffer.from(payload.encryption_tag, 'base64'));
+
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(payload.encrypted_key, 'base64')),
+    decipher.final()
+  ]);
+
+  return decrypted.toString('utf8');
+};
+
 const requireExternalApiKey = async (req, res, next) => {
   try {
     const key =
@@ -58,4 +99,12 @@ const requireExternalApiKey = async (req, res, next) => {
 
 const requireInsuranceKey = requireExternalApiKey;
 
-module.exports = { authenticate, requireRole, requireInsuranceKey, requireExternalApiKey, hashApiKey };
+module.exports = {
+  authenticate,
+  requireRole,
+  requireInsuranceKey,
+  requireExternalApiKey,
+  hashApiKey,
+  encryptApiKey,
+  decryptApiKey
+};

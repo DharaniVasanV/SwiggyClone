@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 const crypto = require('crypto')
 const { db, admin } = require('../utils/firebase')
-const { authenticate, requireRole } = require('../middleware/auth')
+const { authenticate, requireRole, encryptApiKey, decryptApiKey } = require('../middleware/auth')
 
 router.use(authenticate, requireRole('admin'))
 
@@ -98,6 +98,7 @@ router.get('/external-access/key', async (req, res) => {
         preview: data.preview || null,
         label: data.label || '',
         is_active: data.is_active !== false,
+        can_view: Boolean(data.encrypted_key && data.encryption_iv && data.encryption_tag),
         created_by: data.created_by || null,
         created_at: data.created_at?.toDate ? data.created_at.toDate() : null,
         last_regenerated_at: data.last_regenerated_at?.toDate ? data.last_regenerated_at.toDate() : null
@@ -124,12 +125,14 @@ router.post('/external-access/key/generate', async (req, res) => {
     const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex')
     const now = admin.firestore.FieldValue.serverTimestamp()
     const keyRef = db.collection('external_api_keys').doc()
+    const encryptedPayload = encryptApiKey(rawKey)
 
     await keyRef.set({
       key_hash: keyHash,
       preview: buildKeyPreview(rawKey),
       label: String(req.body?.label || '').trim(),
       is_active: true,
+      ...encryptedPayload,
       created_by: req.user.id,
       created_at: now,
       last_regenerated_at: now
@@ -141,6 +144,27 @@ router.post('/external-access/key/generate', async (req, res) => {
       preview: buildKeyPreview(rawKey),
       message: 'New external API key generated. Copy it now because only the preview is stored.'
     })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/external-access/key/:id/reveal', async (req, res) => {
+  try {
+    const keyDoc = await db.collection('external_api_keys').doc(req.params.id).get()
+    if (!keyDoc.exists) {
+      return res.status(404).json({ error: 'API key not found' })
+    }
+
+    const data = keyDoc.data()
+    if (!data?.encrypted_key || !data?.encryption_iv || !data?.encryption_tag) {
+      return res.status(400).json({
+        error: 'This key was created before key viewing was supported. Generate a new key to view it later.'
+      })
+    }
+
+    const apiKey = decryptApiKey(data)
+    res.json({ id: keyDoc.id, api_key: apiKey, preview: data.preview || buildKeyPreview(apiKey) })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

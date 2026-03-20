@@ -50,6 +50,8 @@ export default function AdminApiAccess() {
   const [newKey, setNewKey] = useState('')
   const [newKeyLabel, setNewKeyLabel] = useState('')
   const [togglingKeyId, setTogglingKeyId] = useState(null)
+  const [revealingKeyId, setRevealingKeyId] = useState(null)
+  const [revealedKeys, setRevealedKeys] = useState({})
 
   const authExamples = useMemo(() => ({
     header: newKey || '<GENERATED_API_KEY>',
@@ -112,6 +114,23 @@ export default function AdminApiAccess() {
     }
   }
 
+  const revealKey = async (key) => {
+    if (revealedKeys[key.id]) {
+      return
+    }
+
+    setRevealingKeyId(key.id)
+    try {
+      const res = await adminAPI.revealExternalAccessKey(key.id)
+      setRevealedKeys((current) => ({ ...current, [key.id]: res.data.api_key || '' }))
+      toast.success('API key revealed')
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to reveal API key')
+    } finally {
+      setRevealingKeyId(null)
+    }
+  }
+
   if (loading) {
     return <div className="py-20 text-center text-swiggy-gray-dark">Loading API access settings...</div>
   }
@@ -157,10 +176,10 @@ export default function AdminApiAccess() {
               <button onClick={() => copy(newKey, 'API key')} className="text-sm font-medium text-white underline">
                 Copy new key
               </button>
-              <p className="text-xs text-gray-400 mt-3">This full key is shown only once after generation. Store it safely in the other app.</p>
+              <p className="text-xs text-gray-400 mt-3">You can also view newly created keys later from the list below.</p>
             </div>
           ) : (
-            <p className="text-xs text-gray-400 mt-4">Generated keys are only shown once in full. Saved entries below keep preview, label, and active state.</p>
+            <p className="text-xs text-gray-400 mt-4">Saved entries below keep preview, label, active state, and view access for keys created with the latest format.</p>
           )}
         </div>
 
@@ -194,21 +213,48 @@ export default function AdminApiAccess() {
         ) : (
           <div className="space-y-3">
             {keyInfo.keys.map((key) => (
-              <div key={key.id} className="border border-gray-100 rounded-xl p-4 flex items-center justify-between gap-4">
-                <div>
+              <div key={key.id} className="border border-gray-100 rounded-xl p-4 flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
                   <p className="font-semibold text-swiggy-dark">{key.label || 'Unlabeled key'}</p>
                   <p className="text-xs text-swiggy-gray-dark mt-1">{key.preview}</p>
                   <p className="text-xs text-swiggy-gray-dark mt-1">
                     Created {key.created_at ? new Date(key.created_at).toLocaleString() : 'recently'} - {key.is_active ? 'Active' : 'Inactive'}
                   </p>
+                  {revealedKeys[key.id] ? (
+                    <div className="mt-3 bg-gray-50 border border-gray-100 rounded-lg p-3">
+                      <p className="text-[11px] uppercase tracking-wide text-swiggy-gray-dark mb-1">Full API key</p>
+                      <code className="text-xs break-all font-mono text-swiggy-dark">{revealedKeys[key.id]}</code>
+                      <button
+                        onClick={() => copy(revealedKeys[key.id], 'API key')}
+                        className="mt-2 flex items-center gap-1 text-xs text-swiggy-orange font-medium underline"
+                      >
+                        <FiCopy />
+                        Copy key
+                      </button>
+                    </div>
+                  ) : key.can_view ? (
+                    <button
+                      onClick={() => revealKey(key)}
+                      disabled={revealingKeyId === key.id}
+                      className="mt-3 text-xs text-swiggy-orange font-medium underline disabled:opacity-60"
+                    >
+                      {revealingKeyId === key.id ? 'Loading key...' : 'View key'}
+                    </button>
+                  ) : (
+                    <p className="text-xs text-swiggy-gray-dark mt-3">
+                      Full view is unavailable for older keys. Generate a new key if you need to see it again.
+                    </p>
+                  )}
                 </div>
-                <button
-                  onClick={() => toggleKey(key)}
-                  disabled={togglingKeyId === key.id}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium ${key.is_active ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'} disabled:opacity-60`}
-                >
-                  {togglingKeyId === key.id ? 'Saving...' : key.is_active ? 'Disable' : 'Enable'}
-                </button>
+                <div className="flex flex-col items-end gap-2">
+                  <button
+                    onClick={() => toggleKey(key)}
+                    disabled={togglingKeyId === key.id}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium ${key.is_active ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'} disabled:opacity-60`}
+                  >
+                    {togglingKeyId === key.id ? 'Saving...' : key.is_active ? 'Disable' : 'Enable'}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
