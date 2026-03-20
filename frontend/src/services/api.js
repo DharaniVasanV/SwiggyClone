@@ -58,7 +58,13 @@ export const orderAPI = {
   getMyOrders: () => api.get('/orders/my'),
   cancel: (id) => api.patch(`/orders/${id}/cancel`),
   getTracking: (id) => api.get(`/orders/${id}/tracking`),
+  getEta: (id, params) => api.get(`/tracking/orders/${id}/eta`, { params }),
   submitReview: (id, data) => api.post(`/orders/${id}/review`, data),
+}
+
+export const customerAPI = {
+  getAddresses: () => api.get('/customers/addresses'),
+  updateAddress: (delivery_address) => api.put('/customers/address', { delivery_address }),
 }
 
 // WORKER

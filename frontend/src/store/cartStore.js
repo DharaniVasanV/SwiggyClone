@@ -41,6 +41,7 @@ export const useCartStore = create(
       },
 
       clearCart: () => set({ items: [], restaurantId: null, restaurantName: '' }),
+      replaceCart: (items, restaurantId, restaurantName) => set({ items, restaurantId, restaurantName }),
 
       getTotal: () => get().items.reduce((sum, i) => sum + i.price * i.quantity, 0),
       getItemCount: () => get().items.reduce((sum, i) => sum + i.quantity, 0),

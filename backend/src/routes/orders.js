@@ -204,6 +204,9 @@ router.get('/:id/tracking', authenticate, async (req, res) => {
     if (!doc.exists) return res.status(404).json({ error: 'Order not found' })
     const order = doc.data()
 
+    const restaurantDoc = await db.collection('restaurants').doc(order.restaurant_id).get().catch(() => ({ exists: false, data: () => ({}) }))
+    const restaurant = restaurantDoc.exists ? restaurantDoc.data() : {}
+
     let workerTracking = {}
     if (order.worker_id) {
       const userQuery = await db.collection('users').where('id', '==', order.worker_id).limit(1).get().catch(() => ({ empty: true }))
@@ -226,7 +229,15 @@ router.get('/:id/tracking', authenticate, async (req, res) => {
       .limit(50).get().catch(() => ({ docs: [] }))
     const gpsTrail = gpsSnapshot.docs.map(d => ({ ...d.data(), recorded_at: d.data().recorded_at?.toDate ? d.data().recorded_at.toDate() : null }))
 
-    res.json({ ...order, id: doc.id, ...workerTracking, gps_trail: gpsTrail, created_at: toDate(order.created_at) })
+    res.json({
+      ...order,
+      id: doc.id,
+      ...workerTracking,
+      restaurant_name: restaurant.name,
+      restaurant_delivery_time: Number.isFinite(Number(restaurant.delivery_time)) ? Number(restaurant.delivery_time) : 45,
+      gps_trail: gpsTrail,
+      created_at: toDate(order.created_at)
+    })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

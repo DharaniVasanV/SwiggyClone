@@ -36,37 +36,11 @@ const STEPS = [
   { key: 'delivered', label: 'Delivered', desc: 'Enjoy your meal!' }
 ]
 
-const geocodeAddress = async (address) => {
-  if (!address) return null
-  try {
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`)
-    const data = await res.json()
-    if (data.length > 0) {
-      return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) }
-    }
-  } catch {}
-  return null
-}
-
-const haversineKm = (a, b) => {
-  if (!a || !b) return null
-  const toRad = (deg) => (deg * Math.PI) / 180
-  const earthRadiusKm = 6371
-  const dLat = toRad(b.lat - a.lat)
-  const dLng = toRad(b.lng - a.lng)
-  const lat1 = toRad(a.lat)
-  const lat2 = toRad(b.lat)
-  const h =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2)
-  return 2 * earthRadiusKm * Math.asin(Math.sqrt(h))
-}
-
 export default function OrderTracking() {
   const { id } = useParams()
   const [order, setOrder] = useState(null)
   const [workerLocation, setWorkerLocation] = useState(null)
-  const [etaText, setEtaText] = useState('25-30 min')
+  const [etaText, setEtaText] = useState('45 min max')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -75,6 +49,7 @@ export default function OrderTracking() {
       try {
         const res = await orderAPI.getTracking(id)
         setOrder(res.data)
+        setEtaText(`${res.data.restaurant_delivery_time || 45} min max`)
         if (res.data.worker_lat) {
           setWorkerLocation({ lat: res.data.worker_lat, lng: res.data.worker_lng })
         }
@@ -106,33 +81,31 @@ export default function OrderTracking() {
   }, [id])
 
   useEffect(() => {
-    const updateEta = async () => {
-      if (!order || !workerLocation || order.status === 'delivered') {
-        setEtaText(order?.status === 'delivered' ? 'Completed' : '25-30 min')
+    if (!order) return undefined
+
+    const fetchEta = async () => {
+      if (!['picked_up', 'delivering'].includes(order.status)) {
+        setEtaText(`${order.restaurant_delivery_time || 45} min max`)
         return
       }
 
-      let target = null
-      if (['picked_up', 'delivering'].includes(order.status)) {
-        target = await geocodeAddress(order.delivery_address)
-      } else if (order.pickup_lat && order.pickup_lng) {
-        target = { lat: Number(order.pickup_lat), lng: Number(order.pickup_lng) }
-      } else {
-        target = await geocodeAddress(order.restaurant_address || order.pickup_address)
-      }
-
-      const distanceKm = haversineKm(workerLocation, target)
-      if (!Number.isFinite(distanceKm)) {
-        setEtaText('25-30 min')
+      if (!workerLocation?.lat || !workerLocation?.lng) {
+        setEtaText(`${order.restaurant_delivery_time || 45} min max`)
         return
       }
 
-      const travelMinutes = Math.max(5, Math.round((distanceKm / 25) * 60) + 3)
-      setEtaText(`${travelMinutes}-${travelMinutes + 5} min`)
+      try {
+        const res = await orderAPI.getEta(id, { lat: workerLocation.lat, lng: workerLocation.lng })
+        setEtaText(res.data?.eta_text || `${order.restaurant_delivery_time || 45} min max`)
+      } catch {
+        setEtaText(`${order.restaurant_delivery_time || 45} min max`)
+      }
     }
 
-    updateEta()
-  }, [order, workerLocation])
+    fetchEta()
+    const timer = setInterval(fetchEta, 30000)
+    return () => clearInterval(timer)
+  }, [id, order, workerLocation])
 
   if (loading) return <div className="py-20 text-center text-swiggy-gray-dark">Fetching live tracking...</div>
 

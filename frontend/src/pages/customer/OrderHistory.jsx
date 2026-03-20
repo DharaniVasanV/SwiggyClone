@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { orderAPI } from '../../services/api'
+import { useCartStore } from '../../store/cartStore'
 
 export default function OrderHistory() {
+  const navigate = useNavigate()
+  const replaceCart = useCartStore((state) => state.replaceCart)
   const [orders, setOrders] = useState([])
   const [reviewDrafts, setReviewDrafts] = useState({})
   const [savingReviewId, setSavingReviewId] = useState(null)
@@ -44,6 +47,24 @@ export default function OrderHistory() {
     }
   }
 
+  const reorder = (order) => {
+    const cartItems = (order.items || []).map((item) => ({
+      id: item.id,
+      name: item.name,
+      price: Number(item.price || 0),
+      quantity: Number(item.quantity || 1)
+    }))
+
+    if (!cartItems.length) {
+      toast.error('No items found in this order')
+      return
+    }
+
+    replaceCart(cartItems, order.restaurant_id, order.restaurant_name || 'Restaurant')
+    toast.success('Items added back to cart')
+    navigate('/checkout')
+  }
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
       <h1 className="text-xl font-bold text-swiggy-dark mb-5">Your Orders</h1>
@@ -67,7 +88,7 @@ export default function OrderHistory() {
               <Link to={`/order/${o.id}/track`} className="text-xs bg-swiggy-orange text-white px-3 py-1.5 rounded-lg font-medium">Track Order</Link>
             )}
             {o.status === 'delivered' && (
-              <button className="text-xs border border-swiggy-orange text-swiggy-orange px-3 py-1.5 rounded-lg font-medium">Reorder</button>
+              <button onClick={() => reorder(o)} className="text-xs border border-swiggy-orange text-swiggy-orange px-3 py-1.5 rounded-lg font-medium">Reorder</button>
             )}
           </div>
 

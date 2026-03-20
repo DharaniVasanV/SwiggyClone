@@ -14,19 +14,77 @@ const ENDPOINTS = [
     title: 'Worker Profiles',
     endpoint: 'GET /api/external/worker-profiles',
     desc: 'Operational worker profile data such as zone, vehicle, status, and verification.',
-    fields: ['user_id', 'vehicle_type', 'zone', 'verification_status', 'current_status', 'total_deliveries']
+    fields: [
+      'id',
+      'user_id',
+      'vehicle_type',
+      'zone',
+      'id_proof_url',
+      'id_proof_type',
+      'selfie_url',
+      'platform_experience_years',
+      'verification_status',
+      'current_status',
+      'daily_active_ms',
+      'current_lat',
+      'current_lng',
+      'last_location_update',
+      'last_online_at',
+      'total_deliveries',
+      'rating',
+      'created_at',
+      'verified_at',
+      'updated_at'
+    ]
   },
   {
     title: 'Worker Earnings',
     endpoint: 'GET /api/external/worker-earnings',
     desc: 'Worker earning entries with order-level payout details.',
-    fields: ['worker_id', 'order_id', 'base_earning', 'total_earning', 'distance_km', 'earned_at']
+    fields: [
+      'id',
+      'worker_id',
+      'order_id',
+      'zone',
+      'zone_target_orders',
+      'incentive_applied',
+      'incentive_bonus',
+      'base_earning',
+      'total_earning',
+      'distance_km',
+      'duration_min',
+      'earned_at'
+    ]
   },
   {
     title: 'Orders',
     endpoint: 'GET /api/external/orders',
     desc: 'Order documents as stored in Firestore for worker and delivery integrations.',
-    fields: ['order_number', 'status', 'worker_id', 'restaurant_id', 'customer_id', 'delivery_zone']
+    fields: [
+      'id',
+      'order_number',
+      'customer_id',
+      'restaurant_id',
+      'worker_id',
+      'status',
+      'pickup_address',
+      'pickup_lat',
+      'pickup_lng',
+      'restaurant_zone',
+      'delivery_address',
+      'delivery_zone',
+      'subtotal',
+      'delivery_fee',
+      'total_amount',
+      'worker_earning',
+      'items',
+      'failure_reason',
+      'assigned_at',
+      'picked_up_at',
+      'delivered_at',
+      'created_at',
+      'updated_at'
+    ]
   }
 ]
 
